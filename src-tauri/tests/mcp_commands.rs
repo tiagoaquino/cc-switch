@@ -5,8 +5,9 @@ use std::fs;
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_mcp_path, get_claude_settings_path, import_default_config_test_hook, AppError,
-    AppType, McpApps, McpServer, McpService, MultiAppConfig, Provider, ProviderService,
+    get_claude_credentials_path, get_claude_mcp_path, get_claude_settings_path,
+    import_default_config_test_hook, AppError, AppType, McpApps, McpServer, McpService,
+    MultiAppConfig, Provider, ProviderService,
 };
 
 #[path = "support.rs"]
@@ -63,6 +64,116 @@ fn import_default_config_claude_persists_provider() {
     assert!(
         db_path.exists(),
         "importing default config should persist to cc-switch.db"
+    );
+}
+
+#[test]
+fn import_default_config_claude_imports_credentials_sidecar() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let settings_path = get_claude_settings_path();
+    if let Some(parent) = settings_path.parent() {
+        fs::create_dir_all(parent).expect("create claude settings dir");
+    }
+    let settings = json!({
+        "env": {
+            "ANTHROPIC_AUTH_TOKEN": "test-key",
+            "ANTHROPIC_BASE_URL": "https://api.test"
+        }
+    });
+    fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&settings).expect("serialize settings"),
+    )
+    .expect("seed claude settings.json");
+
+    let credentials_path = get_claude_credentials_path();
+    let credentials = json!({
+        "claudeAiOauth": {
+            "accessToken": "oauth-token",
+            "refreshToken": "oauth-refresh"
+        }
+    });
+    fs::write(
+        &credentials_path,
+        serde_json::to_string_pretty(&credentials).expect("serialize credentials"),
+    )
+    .expect("seed claude .credentials.json");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Claude);
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    import_default_config_test_hook(&state, AppType::Claude)
+        .expect("import default config succeeds");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Claude.as_str())
+        .expect("get all providers");
+    let default_provider = providers.get("default").expect("default provider");
+
+    assert_eq!(
+        default_provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.claude_credentials.as_ref()),
+        Some(&credentials),
+        "imported profile should include claude credentials sidecar in meta"
+    );
+    assert!(
+        default_provider
+            .settings_config
+            .get("credentials")
+            .is_none(),
+        "claude credentials should not be persisted inside settings_config"
+    );
+}
+
+#[test]
+fn import_default_config_claude_with_invalid_credentials_json_returns_error() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let settings_path = get_claude_settings_path();
+    if let Some(parent) = settings_path.parent() {
+        fs::create_dir_all(parent).expect("create claude settings dir");
+    }
+    fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "test-key"
+            }
+        }))
+        .expect("serialize settings"),
+    )
+    .expect("seed claude settings.json");
+
+    let credentials_path = get_claude_credentials_path();
+    fs::write(&credentials_path, "{invalid-json").expect("seed invalid credentials");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Claude);
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    let err = import_default_config_test_hook(&state, AppType::Claude)
+        .expect_err("invalid credentials json should fail import");
+    assert!(
+        err.to_string().contains(".credentials.json"),
+        "error should mention credentials sidecar path, got: {err}"
+    );
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Claude.as_str())
+        .expect("get all providers");
+    assert!(
+        providers.is_empty(),
+        "failed import should not persist providers"
     );
 }
 

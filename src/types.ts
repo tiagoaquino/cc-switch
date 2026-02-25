@@ -30,6 +30,11 @@ export interface Provider {
   inFailoverQueue?: boolean;
 }
 
+export interface ClaudeSettingsConfig {
+  env?: Record<string, string>;
+  [key: string]: any;
+}
+
 export interface GeminiAuthFilesConfig {
   enabled?: boolean;
   googleAccounts?: Record<string, unknown> | null;
@@ -162,6 +167,8 @@ export interface ProviderMeta {
   // - "ANTHROPIC_AUTH_TOKEN" (默认): 大多数第三方/聚合供应商
   // - "ANTHROPIC_API_KEY": 少数供应商需要原生 API Key
   apiKeyField?: "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
+  // Claude OAuth 凭据 sidecar（对应 ~/.claude/.credentials.json）
+  claudeCredentials?: Record<string, unknown> | null;
 }
 
 // Skill 同步方式

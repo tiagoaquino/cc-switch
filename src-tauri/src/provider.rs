@@ -240,6 +240,13 @@ pub struct ProviderMeta {
     /// - "ANTHROPIC_API_KEY": 少数供应商需要原生 API Key
     #[serde(rename = "apiKeyField", skip_serializing_if = "Option::is_none")]
     pub api_key_field: Option<String>,
+    /// Claude OAuth sidecar 凭据（对应 ~/.claude/.credentials.json）
+    #[serde(
+        rename = "claudeCredentials",
+        alias = "claude_credentials",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claude_credentials: Option<Value>,
 }
 
 impl ProviderManager {

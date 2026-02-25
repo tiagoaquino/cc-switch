@@ -52,6 +52,10 @@
   "claudeConfig": {
     "configLabel": "Claude Code settings.json (JSON) *",
     "fullSettingsHint": "Claude Code の settings.json 全文",
+    "credentialsLabel": "Claude OAuth .credentials.json (JSON)",
+    "credentialsHint": "任意の sidecar 認証情報ファイルです。空欄で .credentials.json を削除します。",
+    "credentialsInvalidJson": ".credentials.json の JSON 形式が不正です。構文を確認してください",
+    "credentialsMustBeObject": ".credentials.json は JSON オブジェクトである必要があります（配列/null は不可）",
     "hideAttribution": "AI署名を非表示",
     "alwaysThinking": "拡張思考",
     "enableTeammates": "Teammates モード"
@@ -1953,4 +1957,3 @@
     "suggestedDefaultsHint": "このプリセットの推奨デフォルトモデル設定を使用します"
   }
 }
-

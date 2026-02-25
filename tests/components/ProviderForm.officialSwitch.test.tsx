@@ -102,7 +102,8 @@ function getOfficialSwitch() {
   return screen.getByRole("switch");
 }
 
-const endpointLabelMatcher = /providerForm\.apiEndpoint|API 端点|API Endpoint|API エンドポイント/i;
+const endpointLabelMatcher =
+  /providerForm\.apiEndpoint|API 端点|API Endpoint|API エンドポイント/i;
 
 describe("ProviderForm official API switch", () => {
   it("shows switch in add mode for custom/official and hides it for third-party/aggregator/cn_official presets", async () => {
@@ -221,7 +222,9 @@ describe("ProviderForm official API switch", () => {
     fireEvent.click(getOfficialSwitch());
 
     await waitFor(() => {
-      expect(screen.queryByText("codexConfig.apiUrlLabel")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("codexConfig.apiUrlLabel"),
+      ).not.toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "save" }));
@@ -296,5 +299,36 @@ describe("ProviderForm official API switch", () => {
     fireEvent.click(screen.getByRole("button", { name: "save" }));
     await waitFor(() => expect(geminiSubmit).toHaveBeenCalledTimes(1));
     expect(geminiSubmit.mock.calls[0][0].presetCategory).toBe("official");
+  });
+
+  it("shows dedicated Claude credentials section and submits credentials via meta", async () => {
+    const onSubmit = vi.fn();
+    const credentials = {
+      accessToken: "oauth-access",
+      refreshToken: "oauth-refresh",
+    };
+
+    renderProviderForm({
+      appId: "claude",
+      initialCategory: "custom",
+      initialSettingsConfig: {
+        env: {
+          ANTHROPIC_AUTH_TOKEN: "sk-claude",
+          ANTHROPIC_BASE_URL: "https://claude.example",
+        },
+        credentials,
+      },
+      onSubmit,
+    });
+
+    expect(screen.getAllByText(/\.credentials\.json/i).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+
+    const payload = onSubmit.mock.calls[0][0];
+    const parsedSettings = JSON.parse(payload.settingsConfig);
+    expect(parsedSettings.credentials).toBeUndefined();
+    expect(payload.meta?.claudeCredentials).toEqual(credentials);
   });
 });

@@ -52,6 +52,10 @@
   "claudeConfig": {
     "configLabel": "Claude Code settings.json (JSON) *",
     "fullSettingsHint": "Full Claude Code settings.json content",
+    "credentialsLabel": "Claude OAuth .credentials.json (JSON)",
+    "credentialsHint": "Optional sidecar credentials file. Leave empty to remove .credentials.json.",
+    "credentialsInvalidJson": "Invalid .credentials.json JSON format, please check syntax",
+    "credentialsMustBeObject": ".credentials.json must be a JSON object (not array/null)",
     "hideAttribution": "Hide AI Attribution",
     "alwaysThinking": "Extended Thinking",
     "enableTeammates": "Teammates Mode"
@@ -1972,4 +1976,3 @@
     "suggestedDefaultsHint": "Use this preset's recommended default model configuration"
   }
 }
-

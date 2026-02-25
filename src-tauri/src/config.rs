@@ -85,6 +85,11 @@ pub fn get_claude_settings_path() -> PathBuf {
     settings
 }
 
+/// 获取 Claude OAuth 凭据 sidecar 文件路径（~/.claude/.credentials.json）
+pub fn get_claude_credentials_path() -> PathBuf {
+    get_claude_config_dir().join(".credentials.json")
+}
+
 /// 获取应用配置目录路径 (~/.cc-switch)
 pub fn get_app_config_dir() -> PathBuf {
     if let Some(custom) = crate::app_store::get_app_config_dir_override() {

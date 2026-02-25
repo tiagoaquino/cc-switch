@@ -52,6 +52,10 @@
   "claudeConfig": {
     "configLabel": "Claude Code 配置 (JSON) *",
     "fullSettingsHint": "完整的 Claude Code settings.json 配置内容",
+    "credentialsLabel": "Claude OAuth .credentials.json (JSON)",
+    "credentialsHint": "可选的 sidecar 凭据文件。留空将删除 .credentials.json。",
+    "credentialsInvalidJson": ".credentials.json JSON 格式错误，请检查语法",
+    "credentialsMustBeObject": ".credentials.json 必须是 JSON 对象（不能是数组/null）",
     "hideAttribution": "隐藏 AI 署名",
     "alwaysThinking": "扩展思考",
     "enableTeammates": "Teammates 模式"
@@ -1972,4 +1976,3 @@
     "suggestedDefaultsHint": "使用此预设推荐的默认模型配置"
   }
 }
-

@@ -1,9 +1,10 @@
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_codex_auth_path, get_codex_config_path, logout_provider_context_test_hook, read_json_file,
-    switch_provider_test_hook, write_codex_live_atomic, AppError, AppType, McpApps, McpServer,
-    MultiAppConfig, Provider,
+    get_claude_credentials_path, get_codex_auth_path, get_codex_config_path,
+    logout_provider_context_test_hook, read_json_file, switch_provider_test_hook,
+    write_codex_live_atomic, AppError, AppType, McpApps, McpServer, MultiAppConfig, Provider,
+    ProviderMeta,
 };
 
 #[path = "support.rs"]
@@ -187,6 +188,7 @@ fn switch_provider_updates_claude_live_and_state() {
     let _home = ensure_test_home();
 
     let settings_path = cc_switch_lib::get_claude_settings_path();
+    let credentials_path = get_claude_credentials_path();
     if let Some(parent) = settings_path.parent() {
         std::fs::create_dir_all(parent).expect("create claude settings dir");
     }
@@ -203,6 +205,14 @@ fn switch_provider_updates_claude_live_and_state() {
         serde_json::to_string_pretty(&legacy_live).expect("serialize legacy live"),
     )
     .expect("seed claude live config");
+    std::fs::write(
+        &credentials_path,
+        serde_json::to_string_pretty(&json!({
+            "accessToken": "legacy-credentials"
+        }))
+        .expect("serialize legacy credentials"),
+    )
+    .expect("seed credentials sidecar");
 
     let mut config = MultiAppConfig::default();
     {
@@ -221,18 +231,22 @@ fn switch_provider_updates_claude_live_and_state() {
                 None,
             ),
         );
-        manager.providers.insert(
+        let mut new_provider = Provider::with_id(
             "new-provider".to_string(),
-            Provider::with_id(
-                "new-provider".to_string(),
-                "Fresh Claude".to_string(),
-                json!({
-                    "env": { "ANTHROPIC_API_KEY": "fresh-key" },
-                    "workspace": { "path": "/tmp/new-workspace" }
-                }),
-                None,
-            ),
+            "Fresh Claude".to_string(),
+            json!({
+                "env": { "ANTHROPIC_API_KEY": "fresh-key" },
+                "workspace": { "path": "/tmp/new-workspace" }
+            }),
+            None,
         );
+        new_provider.meta = Some(ProviderMeta {
+            claude_credentials: Some(json!({ "accessToken": "fresh-credentials" })),
+            ..Default::default()
+        });
+        manager
+            .providers
+            .insert("new-provider".to_string(), new_provider);
     }
 
     let app_state = create_test_state_with_config(&config).expect("create test state");
@@ -249,6 +263,13 @@ fn switch_provider_updates_claude_live_and_state() {
             .and_then(|key| key.as_str()),
         Some("fresh-key"),
         "live settings.json should reflect new provider auth"
+    );
+    let live_credentials: serde_json::Value =
+        read_json_file(&credentials_path).expect("read .credentials.json");
+    assert_eq!(
+        live_credentials.get("accessToken").and_then(|v| v.as_str()),
+        Some("fresh-credentials"),
+        "command switch should apply provider credentials sidecar"
     );
 
     let current_id = app_state
@@ -285,6 +306,20 @@ fn switch_provider_updates_claude_live_and_state() {
     assert!(
         legacy_provider.settings_config.get("workspace").is_none(),
         "backfill should NOT include non-key fields like workspace"
+    );
+    assert_eq!(
+        legacy_provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.claude_credentials.as_ref())
+            .and_then(|value| value.get("accessToken"))
+            .and_then(|v| v.as_str()),
+        Some("legacy-credentials"),
+        "command switch should backfill live credentials into previous provider meta"
+    );
+    assert!(
+        legacy_provider.settings_config.get("credentials").is_none(),
+        "credentials should not be kept in settings_config after backfill"
     );
 
     let new_provider = providers.get("new-provider").expect("new provider exists");

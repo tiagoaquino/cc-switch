@@ -134,6 +134,46 @@ function isOfficialSwitchEligibleCategory(category?: ProviderCategory) {
   );
 }
 
+function sanitizeClaudeSettingsForEditor(
+  appId: AppId,
+  settingsConfig?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (appId !== "claude") {
+    return settingsConfig;
+  }
+  if (!settingsConfig || typeof settingsConfig !== "object") {
+    return settingsConfig;
+  }
+  const sanitized = { ...settingsConfig };
+  delete (sanitized as Record<string, unknown>).credentials;
+  return sanitized;
+}
+
+function extractClaudeCredentialsFromInitialData(initialData?: {
+  settingsConfig?: Record<string, unknown>;
+  meta?: ProviderMeta;
+}): Record<string, unknown> | undefined {
+  const metaCredentials = initialData?.meta?.claudeCredentials;
+  if (
+    metaCredentials &&
+    typeof metaCredentials === "object" &&
+    !Array.isArray(metaCredentials)
+  ) {
+    return metaCredentials as Record<string, unknown>;
+  }
+
+  const legacyCredentials = initialData?.settingsConfig?.credentials;
+  if (
+    legacyCredentials &&
+    typeof legacyCredentials === "object" &&
+    !Array.isArray(legacyCredentials)
+  ) {
+    return legacyCredentials as Record<string, unknown>;
+  }
+
+  return undefined;
+}
+
 export function ProviderForm({
   appId,
   providerId,
@@ -257,13 +297,33 @@ export function ProviderForm({
     });
   }, [appId, initialData]);
 
+  const initialClaudeCredentialsEditorValue = useMemo(() => {
+    if (appId !== "claude") {
+      return "";
+    }
+    const credentials = extractClaudeCredentialsFromInitialData(initialData);
+    return credentials ? JSON.stringify(credentials, null, 2) : "";
+  }, [appId, initialData]);
+
+  const [claudeCredentialsConfig, setClaudeCredentialsConfig] =
+    useState<string>(initialClaudeCredentialsEditorValue);
+
+  useEffect(() => {
+    setClaudeCredentialsConfig(initialClaudeCredentialsEditorValue);
+  }, [initialClaudeCredentialsEditorValue]);
+
+  const initialSettingsConfigForForm = useMemo(
+    () => sanitizeClaudeSettingsForEditor(appId, initialData?.settingsConfig),
+    [appId, initialData?.settingsConfig],
+  );
+
   const defaultValues: ProviderFormData = useMemo(
     () => ({
       name: initialData?.name ?? "",
       websiteUrl: initialData?.websiteUrl ?? "",
       notes: initialData?.notes ?? "",
-      settingsConfig: initialData?.settingsConfig
-        ? JSON.stringify(initialData.settingsConfig, null, 2)
+      settingsConfig: initialSettingsConfigForForm
+        ? JSON.stringify(initialSettingsConfigForForm, null, 2)
         : appId === "codex"
           ? CODEX_DEFAULT_CONFIG
           : appId === "gemini"
@@ -276,7 +336,7 @@ export function ProviderForm({
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
-    [initialData, appId],
+    [initialData, appId, initialSettingsConfigForForm],
   );
 
   const form = useForm<ProviderFormData>({
@@ -647,7 +707,10 @@ export function ProviderForm({
 
     // 非官方供应商必填校验：端点和 API Key
     // cloud_provider（如 Bedrock）通过模板变量处理认证，跳过通用校验
-    if (effectiveCategory !== "official" && effectiveCategory !== "cloud_provider") {
+    if (
+      effectiveCategory !== "official" &&
+      effectiveCategory !== "cloud_provider"
+    ) {
       if (appId === "claude") {
         if (!baseUrl.trim()) {
           toast.error(
@@ -703,6 +766,41 @@ export function ProviderForm({
     }
 
     let settingsConfig: string;
+    let claudeCredentialsForMeta: Record<string, unknown> | undefined;
+
+    if (appId === "claude") {
+      const trimmedCredentials = claudeCredentialsConfig.trim();
+      if (trimmedCredentials) {
+        try {
+          const parsedCredentials = JSON.parse(trimmedCredentials);
+          if (
+            !parsedCredentials ||
+            typeof parsedCredentials !== "object" ||
+            Array.isArray(parsedCredentials)
+          ) {
+            toast.error(
+              t("claudeConfig.credentialsMustBeObject", {
+                defaultValue:
+                  ".credentials.json must be a JSON object (not array/null)",
+              }),
+            );
+            return;
+          }
+          claudeCredentialsForMeta = parsedCredentials as Record<
+            string,
+            unknown
+          >;
+        } catch {
+          toast.error(
+            t("claudeConfig.credentialsInvalidJson", {
+              defaultValue:
+                "Invalid .credentials.json JSON format, please check syntax",
+            }),
+          );
+          return;
+        }
+      }
+    }
 
     if (appId === "codex") {
       try {
@@ -790,6 +888,26 @@ export function ProviderForm({
       settingsConfig = JSON.stringify(omoConfig);
     } else {
       settingsConfig = values.settingsConfig.trim();
+    }
+
+    if (appId === "claude") {
+      try {
+        const parsedSettings = JSON.parse(settingsConfig) as Record<
+          string,
+          unknown
+        >;
+        if (
+          parsedSettings &&
+          typeof parsedSettings === "object" &&
+          !Array.isArray(parsedSettings) &&
+          "credentials" in parsedSettings
+        ) {
+          delete parsedSettings.credentials;
+          settingsConfig = JSON.stringify(parsedSettings);
+        }
+      } catch {
+        // keep original validation behavior from schema/json editor
+      }
     }
 
     const payload: ProviderFormValues = {
@@ -901,6 +1019,8 @@ export function ProviderForm({
         appId === "claude" && effectiveCategory !== "official"
           ? localApiKeyField
           : undefined,
+      claudeCredentials:
+        appId === "claude" ? claudeCredentialsForMeta : undefined,
     };
 
     if (isOfficialSwitchControlled && payload.meta) {
@@ -1016,6 +1136,9 @@ export function ProviderForm({
     if (value === "custom") {
       setActivePreset(null);
       form.reset(defaultValues);
+      if (appId === "claude") {
+        setClaudeCredentialsConfig("");
+      }
 
       if (appId === "codex") {
         const template = getCodexCustomTemplate();
@@ -1162,6 +1285,7 @@ export function ProviderForm({
       icon: preset.icon ?? "",
       iconColor: preset.iconColor ?? "",
     });
+    setClaudeCredentialsConfig("");
   };
 
   const settingsConfigErrorField = (
@@ -1346,10 +1470,7 @@ export function ProviderForm({
             providerId={providerId}
             shouldShowApiKey={
               hasApiKeyField(form.getValues("settingsConfig"), "claude") &&
-              shouldShowApiKey(
-                form.getValues("settingsConfig"),
-                isEditMode,
-              )
+              shouldShowApiKey(form.getValues("settingsConfig"), isEditMode)
             }
             apiKey={apiKey}
             onApiKeyChange={handleApiKeyChange}
@@ -1605,41 +1726,70 @@ export function ProviderForm({
           </>
         ) : (
           <>
-            <div className="space-y-2">
-              <Label htmlFor="settingsConfig">
-                {t("claudeConfig.configLabel")}
-              </Label>
-              <ClaudeQuickToggles
-                onPatchApplied={(patch) => {
-                  try {
-                    const cfg = JSON.parse(
-                      form.getValues("settingsConfig") || "{}",
-                    );
-                    jsonMergePatch(cfg, patch);
-                    form.setValue(
-                      "settingsConfig",
-                      JSON.stringify(cfg, null, 2),
-                    );
-                  } catch {
-                    // invalid JSON in editor — skip mirror
-                  }
-                }}
-              />
-              <JsonEditor
-                value={form.watch("settingsConfig")}
-                onChange={(value) => form.setValue("settingsConfig", value)}
-                placeholder={`{
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="settingsConfig">
+                  {t("claudeConfig.configLabel")}
+                </Label>
+                <ClaudeQuickToggles
+                  onPatchApplied={(patch) => {
+                    try {
+                      const cfg = JSON.parse(
+                        form.getValues("settingsConfig") || "{}",
+                      );
+                      jsonMergePatch(cfg, patch);
+                      form.setValue(
+                        "settingsConfig",
+                        JSON.stringify(cfg, null, 2),
+                      );
+                    } catch {
+                      // invalid JSON in editor — skip mirror
+                    }
+                  }}
+                />
+                <JsonEditor
+                  value={form.watch("settingsConfig")}
+                  onChange={(value) => form.setValue("settingsConfig", value)}
+                  placeholder={`{
   "env": {
     "ANTHROPIC_AUTH_TOKEN": "your-api-key-here"
   }
 }`}
-                rows={14}
-                showValidation={true}
-                language="json"
-              />
-              <p className="text-xs text-muted-foreground">
-                {t("claudeConfig.fullSettingsHint")}
-              </p>
+                  rows={14}
+                  showValidation={true}
+                  language="json"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("claudeConfig.fullSettingsHint")}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="claudeCredentialsConfig">
+                  {t("claudeConfig.credentialsLabel", {
+                    defaultValue: "Claude OAuth .credentials.json (JSON)",
+                  })}
+                </Label>
+                <JsonEditor
+                  value={claudeCredentialsConfig}
+                  onChange={setClaudeCredentialsConfig}
+                  placeholder={`{
+  "claudeAiOauth": {
+    "accessToken": "your-access-token",
+    "refreshToken": "your-refresh-token"
+  }
+}`}
+                  rows={10}
+                  showValidation={true}
+                  language="json"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("claudeConfig.credentialsHint", {
+                    defaultValue:
+                      "Optional sidecar credentials file. Leave empty to remove .credentials.json.",
+                  })}
+                </p>
+              </div>
             </div>
             {settingsConfigErrorField}
           </>

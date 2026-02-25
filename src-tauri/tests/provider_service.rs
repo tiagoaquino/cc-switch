@@ -1,8 +1,9 @@
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_settings_path, read_json_file, write_codex_live_atomic, AppError, AppType, McpApps,
-    McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService, AppSettings, update_settings,
+    get_claude_credentials_path, get_claude_settings_path, read_json_file, update_settings,
+    write_codex_live_atomic, AppError, AppSettings, AppType, McpApps, McpServer, MultiAppConfig,
+    Provider, ProviderMeta, ProviderService,
 };
 
 #[path = "support.rs"]
@@ -570,9 +571,7 @@ fn switch_gemini_with_auth_files_enabled_writes_both_files() {
         Some("a@b.com")
     );
     assert_eq!(
-        oauth_creds
-            .get("refresh_token")
-            .and_then(|v| v.as_str()),
+        oauth_creds.get("refresh_token").and_then(|v| v.as_str()),
         Some("rt-1")
     );
 }
@@ -626,8 +625,7 @@ fn switch_gemini_with_auth_files_disabled_preserves_existing_files() {
     }
 
     let state = create_test_state_with_config(&config).expect("create test state");
-    ProviderService::switch(&state, AppType::Gemini, "api-profile")
-        .expect("switch should succeed");
+    ProviderService::switch(&state, AppType::Gemini, "api-profile").expect("switch should succeed");
 
     let google_accounts: serde_json::Value =
         read_json_file(&home.join(".gemini").join("google_accounts.json"))
@@ -642,9 +640,7 @@ fn switch_gemini_with_auth_files_disabled_preserves_existing_files() {
         Some("keep@x.com")
     );
     assert_eq!(
-        oauth_creds
-            .get("refresh_token")
-            .and_then(|v| v.as_str()),
+        oauth_creds.get("refresh_token").and_then(|v| v.as_str()),
         Some("keep-rt")
     );
 }
@@ -758,9 +754,7 @@ fn switch_gemini_with_auth_files_partial_only_updates_specified_file() {
         Some("new@x.com")
     );
     assert_eq!(
-        oauth_creds
-            .get("refresh_token")
-            .and_then(|v| v.as_str()),
+        oauth_creds.get("refresh_token").and_then(|v| v.as_str()),
         Some("keep-rt"),
         "oauth_creds should be preserved when field is absent"
     );
@@ -773,6 +767,7 @@ fn provider_service_switch_claude_updates_live_and_state() {
     let _home = ensure_test_home();
 
     let settings_path = get_claude_settings_path();
+    let credentials_path = get_claude_credentials_path();
     if let Some(parent) = settings_path.parent() {
         std::fs::create_dir_all(parent).expect("create claude settings dir");
     }
@@ -789,6 +784,14 @@ fn provider_service_switch_claude_updates_live_and_state() {
         serde_json::to_string_pretty(&legacy_live).expect("serialize legacy live"),
     )
     .expect("seed claude live config");
+    std::fs::write(
+        &credentials_path,
+        serde_json::to_string_pretty(&json!({
+            "accessToken": "legacy-credentials"
+        }))
+        .expect("serialize legacy credentials"),
+    )
+    .expect("seed claude credentials");
 
     let mut config = MultiAppConfig::default();
     {
@@ -807,18 +810,22 @@ fn provider_service_switch_claude_updates_live_and_state() {
                 None,
             ),
         );
-        manager.providers.insert(
+        let mut new_provider = Provider::with_id(
             "new-provider".to_string(),
-            Provider::with_id(
-                "new-provider".to_string(),
-                "Fresh Claude".to_string(),
-                json!({
-                    "env": { "ANTHROPIC_API_KEY": "fresh-key" },
-                    "workspace": { "path": "/tmp/new-workspace" }
-                }),
-                None,
-            ),
+            "Fresh Claude".to_string(),
+            json!({
+                "env": { "ANTHROPIC_API_KEY": "fresh-key" },
+                "workspace": { "path": "/tmp/new-workspace" }
+            }),
+            None,
         );
+        new_provider.meta = Some(ProviderMeta {
+            claude_credentials: Some(json!({ "accessToken": "fresh-credentials" })),
+            ..Default::default()
+        });
+        manager
+            .providers
+            .insert("new-provider".to_string(), new_provider);
     }
 
     let state = create_test_state_with_config(&config).expect("create test state");
@@ -835,6 +842,13 @@ fn provider_service_switch_claude_updates_live_and_state() {
             .and_then(|key| key.as_str()),
         Some("fresh-key"),
         "live settings.json should reflect new provider auth"
+    );
+    let live_credentials: serde_json::Value =
+        read_json_file(&credentials_path).expect("read claude credentials");
+    assert_eq!(
+        live_credentials.get("accessToken").and_then(|v| v.as_str()),
+        Some("fresh-credentials"),
+        ".credentials.json should be replaced by target provider credentials"
     );
 
     let providers = state
@@ -867,6 +881,91 @@ fn provider_service_switch_claude_updates_live_and_state() {
     assert!(
         legacy_provider.settings_config.get("workspace").is_none(),
         "backfill should NOT include non-key fields like workspace"
+    );
+    assert_eq!(
+        legacy_provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.claude_credentials.as_ref())
+            .and_then(|value| value.get("accessToken"))
+            .and_then(|v| v.as_str()),
+        Some("legacy-credentials"),
+        "backfill should preserve live credentials sidecar in provider meta"
+    );
+    assert!(
+        legacy_provider.settings_config.get("credentials").is_none(),
+        "backfill should keep credentials out of settings_config"
+    );
+}
+
+#[test]
+fn provider_service_switch_claude_without_credentials_removes_live_credentials_file() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let settings_path = get_claude_settings_path();
+    let credentials_path = get_claude_credentials_path();
+    if let Some(parent) = settings_path.parent() {
+        std::fs::create_dir_all(parent).expect("create claude settings dir");
+    }
+
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "legacy-key"
+            }
+        }))
+        .expect("serialize settings"),
+    )
+    .expect("seed settings");
+    std::fs::write(
+        &credentials_path,
+        serde_json::to_string_pretty(&json!({
+            "accessToken": "legacy-credentials"
+        }))
+        .expect("serialize credentials"),
+    )
+    .expect("seed credentials");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "old-provider".to_string();
+        manager.providers.insert(
+            "old-provider".to_string(),
+            Provider::with_id(
+                "old-provider".to_string(),
+                "Legacy Claude".to_string(),
+                json!({
+                    "env": { "ANTHROPIC_API_KEY": "old-key" }
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "new-provider".to_string(),
+            Provider::with_id(
+                "new-provider".to_string(),
+                "Fresh Claude".to_string(),
+                json!({
+                    "env": { "ANTHROPIC_API_KEY": "fresh-key" }
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    ProviderService::switch(&state, AppType::Claude, "new-provider")
+        .expect("switch provider should succeed");
+
+    assert!(
+        !credentials_path.exists(),
+        ".credentials.json should be removed when target provider omits credentials"
     );
 }
 
@@ -1211,6 +1310,10 @@ fn logout_context_claude_deletes_live_files_and_clears_current() {
         &home.join(".claude").join("claude.json"),
         r#"{"env":{"ANTHROPIC_API_KEY":"x"}}"#,
     );
+    seed_live_file(
+        &home.join(".claude").join(".credentials.json"),
+        r#"{"accessToken":"x"}"#,
+    );
     seed_live_file(&home.join(".claude.json"), r#"{"mcpServers":{}}"#);
 
     let config = create_config_with_current(AppType::Claude, "claude-current");
@@ -1233,6 +1336,10 @@ fn logout_context_claude_deletes_live_files_and_clears_current() {
     assert!(
         !home.join(".claude").join("claude.json").exists(),
         "claude.json should be deleted"
+    );
+    assert!(
+        !home.join(".claude").join(".credentials.json").exists(),
+        ".credentials.json should be deleted"
     );
     assert!(
         !home.join(".claude.json").exists(),
@@ -1310,7 +1417,10 @@ fn logout_context_gemini_deletes_live_files_and_clears_current() {
         &home.join(".gemini").join(".env"),
         "GEMINI_API_KEY=gemini-key\n",
     );
-    seed_live_file(&home.join(".gemini").join("settings.json"), r#"{"security":{}}"#);
+    seed_live_file(
+        &home.join(".gemini").join("settings.json"),
+        r#"{"security":{}}"#,
+    );
     seed_live_file(
         &home.join(".gemini").join("google_accounts.json"),
         r#"{"accounts":[]}"#,
@@ -1403,7 +1513,11 @@ fn logout_context_opencode_deletes_live_files_and_clears_current_flags() {
     ProviderService::logout_context(&state, AppType::OpenCode).expect("logout should succeed");
 
     assert!(
-        !home.join(".config").join("opencode").join("opencode.json").exists(),
+        !home
+            .join(".config")
+            .join("opencode")
+            .join("opencode.json")
+            .exists(),
         "opencode.json should be deleted"
     );
     assert!(
@@ -1425,11 +1539,7 @@ fn logout_context_openclaw_deletes_live_files_and_clears_current_flags() {
     reset_test_fs();
     let home = ensure_test_home();
     let mut settings = AppSettings::default();
-    settings.openclaw_config_dir = Some(
-        home.join(".openclaw")
-            .to_string_lossy()
-            .to_string(),
-    );
+    settings.openclaw_config_dir = Some(home.join(".openclaw").to_string_lossy().to_string());
     update_settings(settings).expect("set openclaw test override");
 
     seed_live_file(

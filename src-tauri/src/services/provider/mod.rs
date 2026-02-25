@@ -31,8 +31,9 @@ pub(crate) use live::write_live_partial;
 
 // Internal re-exports
 use live::{
-    backfill_key_fields, merge_gemini_backfill_with_existing, remove_openclaw_provider_from_live,
-    remove_opencode_provider_from_live, reset_app_live_files, write_live_snapshot,
+    backfill_claude_meta_fields, backfill_key_fields, merge_gemini_backfill_with_existing,
+    remove_openclaw_provider_from_live, remove_opencode_provider_from_live, reset_app_live_files,
+    write_live_snapshot,
 };
 use usage::validate_usage_script;
 
@@ -85,16 +86,97 @@ mod tests {
         assert_eq!(api_key, "token");
         assert_eq!(base_url, "https://claude.example");
     }
+
+    #[test]
+    fn validate_provider_settings_rejects_invalid_claude_credentials_type() {
+        let provider = Provider::with_id(
+            "claude".into(),
+            "Claude".into(),
+            json!({
+                "env": {},
+                "credentials": "not-an-object"
+            }),
+            None,
+        );
+
+        let err = ProviderService::validate_provider_settings(&AppType::Claude, &provider)
+            .expect_err("invalid credentials type should be rejected");
+        assert!(
+            err.to_string().contains("credentials"),
+            "expected credentials validation error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_provider_settings_rejects_invalid_claude_meta_credentials_type() {
+        let mut provider =
+            Provider::with_id("claude".into(), "Claude".into(), json!({ "env": {} }), None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            claude_credentials: Some(json!("not-an-object")),
+            ..Default::default()
+        });
+
+        let err = ProviderService::validate_provider_settings(&AppType::Claude, &provider)
+            .expect_err("invalid meta credentials type should be rejected");
+        assert!(
+            err.to_string().contains("claudeCredentials"),
+            "expected claudeCredentials validation error, got {err:?}"
+        );
+    }
 }
 
 impl ProviderService {
-    fn normalize_provider_if_claude(app_type: &AppType, provider: &mut Provider) {
-        if matches!(app_type, AppType::Claude) {
-            let mut v = provider.settings_config.clone();
-            if normalize_claude_models_in_value(&mut v) {
-                provider.settings_config = v;
+    fn hoist_legacy_claude_credentials_to_meta(provider: &mut Provider) -> bool {
+        let Some(settings_obj) = provider.settings_config.as_object_mut() else {
+            return false;
+        };
+
+        let Some(legacy_credentials) = settings_obj.remove("credentials") else {
+            return false;
+        };
+
+        if legacy_credentials.is_object() {
+            let meta = provider
+                .meta
+                .get_or_insert_with(crate::provider::ProviderMeta::default);
+            let should_update = meta.claude_credentials.as_ref() != Some(&legacy_credentials);
+            if should_update {
+                meta.claude_credentials = Some(legacy_credentials);
             }
+            return true;
         }
+
+        if legacy_credentials.is_null() {
+            if let Some(meta) = provider.meta.as_mut() {
+                if meta.claude_credentials.is_some() {
+                    meta.claude_credentials = None;
+                }
+            }
+            return true;
+        }
+
+        // Preserve invalid legacy payload in settings_config so validation can reject it.
+        settings_obj.insert("credentials".to_string(), legacy_credentials);
+        false
+    }
+
+    fn normalize_provider_if_claude(app_type: &AppType, provider: &mut Provider) -> bool {
+        if !matches!(app_type, AppType::Claude) {
+            return false;
+        }
+
+        let mut changed = false;
+        let mut v = provider.settings_config.clone();
+        if normalize_claude_models_in_value(&mut v) {
+            provider.settings_config = v;
+            changed = true;
+        }
+
+        if Self::hoist_legacy_claude_credentials_to_meta(provider) {
+            changed = true;
+        }
+
+        changed
     }
 
     /// List all providers for an app type
@@ -102,7 +184,19 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
     ) -> Result<IndexMap<String, Provider>, AppError> {
-        state.db.get_all_providers(app_type.as_str())
+        let mut providers = state.db.get_all_providers(app_type.as_str())?;
+
+        // Best-effort migration for legacy Claude providers:
+        // move settings_config.credentials -> meta.claudeCredentials.
+        if matches!(app_type, AppType::Claude) {
+            for provider in providers.values_mut() {
+                if Self::normalize_provider_if_claude(&app_type, provider) {
+                    state.db.save_provider(app_type.as_str(), provider)?;
+                }
+            }
+        }
+
+        Ok(providers)
     }
 
     /// Get current provider ID
@@ -541,16 +635,20 @@ impl ProviderService {
                         if let Some(mut current_provider) = providers.get(&current_id).cloned() {
                             // Gemini keeps additional profile-only fields (authFiles/config),
                             // so backfill updates env from live while preserving existing fields.
-                            current_provider.settings_config = if matches!(app_type, AppType::Gemini)
-                            {
-                                merge_gemini_backfill_with_existing(
-                                    &current_provider.settings_config,
-                                    &live_config,
-                                )
-                            } else {
-                                // Other switch-mode apps only persist provider key fields.
-                                backfill_key_fields(&app_type, &live_config)
-                            };
+                            current_provider.settings_config =
+                                if matches!(app_type, AppType::Gemini) {
+                                    merge_gemini_backfill_with_existing(
+                                        &current_provider.settings_config,
+                                        &live_config,
+                                    )
+                                } else {
+                                    // Other switch-mode apps only persist provider key fields.
+                                    backfill_key_fields(&app_type, &live_config)
+                                };
+                            if matches!(app_type, AppType::Claude) {
+                                backfill_claude_meta_fields(&mut current_provider, &live_config);
+                            }
+                            Self::normalize_provider_if_claude(&app_type, &mut current_provider);
                             if let Err(e) =
                                 state.db.save_provider(app_type.as_str(), &current_provider)
                             {
@@ -734,12 +832,36 @@ impl ProviderService {
     fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
         match app_type {
             AppType::Claude => {
-                if !provider.settings_config.is_object() {
-                    return Err(AppError::localized(
+                let settings = provider.settings_config.as_object().ok_or_else(|| {
+                    AppError::localized(
                         "provider.claude.settings.not_object",
                         "Claude 配置必须是 JSON 对象",
                         "Claude configuration must be a JSON object",
-                    ));
+                    )
+                })?;
+
+                if let Some(credentials) = settings.get("credentials") {
+                    if !(credentials.is_object() || credentials.is_null()) {
+                        return Err(AppError::localized(
+                            "provider.claude.credentials.invalid_type",
+                            "Claude 配置格式错误: credentials 必须是对象或 null",
+                            "Claude config invalid: credentials must be an object or null",
+                        ));
+                    }
+                }
+
+                if let Some(meta_credentials) = provider
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.claude_credentials.as_ref())
+                {
+                    if !meta_credentials.is_object() {
+                        return Err(AppError::localized(
+                            "provider.claude.credentials.invalid_type",
+                            "Claude 配置格式错误: meta.claudeCredentials 必须是对象",
+                            "Claude config invalid: meta.claudeCredentials must be an object",
+                        ));
+                    }
                 }
             }
             AppType::Codex => {

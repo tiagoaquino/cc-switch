@@ -10,8 +10,8 @@ use serde_json::{json, Value};
 use crate::app_config::AppType;
 use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
 use crate::config::{
-    delete_file, get_claude_config_dir, get_claude_mcp_path, get_claude_settings_path,
-    read_json_file, write_json_file,
+    delete_file, get_claude_config_dir, get_claude_credentials_path, get_claude_mcp_path,
+    get_claude_settings_path, read_json_file, write_json_file,
 };
 use crate::error::AppError;
 use crate::provider::Provider;
@@ -31,8 +31,70 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
         obj.remove("apiFormat");
         obj.remove("openrouter_compat_mode");
         obj.remove("openrouterCompatMode");
+        obj.remove("credentials");
     }
     v
+}
+
+fn read_claude_credentials_from_live() -> Result<Option<Value>, AppError> {
+    let credentials_path = get_claude_credentials_path();
+    if !credentials_path.exists() {
+        return Ok(None);
+    }
+
+    let credentials: Value = read_json_file(&credentials_path)?;
+    if !credentials.is_object() {
+        return Err(AppError::localized(
+            "claude.credentials.invalid_type",
+            format!(
+                "Claude 凭据文件格式错误: {} 必须是 JSON 对象",
+                credentials_path.display()
+            ),
+            format!(
+                "Claude credentials file format invalid: {} must be a JSON object",
+                credentials_path.display()
+            ),
+        ));
+    }
+
+    Ok(Some(credentials))
+}
+
+fn resolve_claude_credentials_for_provider(provider: &Provider) -> Result<Option<Value>, AppError> {
+    if let Some(meta_credentials) = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.claude_credentials.as_ref())
+    {
+        if !meta_credentials.is_object() {
+            return Err(AppError::localized(
+                "provider.claude.credentials.invalid_type",
+                "Claude 配置格式错误: meta.claudeCredentials 必须是对象",
+                "Claude config invalid: meta.claudeCredentials must be an object",
+            ));
+        }
+        return Ok(Some(meta_credentials.clone()));
+    }
+
+    // Backward compatibility: tolerate legacy credentials in settings_config.
+    match provider.settings_config.get("credentials") {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) if value.is_object() => Ok(Some(value.clone())),
+        Some(_) => Err(AppError::localized(
+            "provider.claude.credentials.invalid_type",
+            "Claude 配置格式错误: credentials 必须是对象或 null",
+            "Claude config invalid: credentials must be an object or null",
+        )),
+    }
+}
+
+fn apply_claude_credentials_for_provider(provider: &Provider) -> Result<(), AppError> {
+    let credentials_path = get_claude_credentials_path();
+    match resolve_claude_credentials_for_provider(provider)? {
+        Some(credentials) => write_json_file(&credentials_path, &credentials)?,
+        None => delete_file(&credentials_path)?,
+    }
+    Ok(())
 }
 
 pub(crate) fn reset_app_live_files(app_type: &AppType) -> Result<(), AppError> {
@@ -41,6 +103,7 @@ pub(crate) fn reset_app_live_files(app_type: &AppType) -> Result<(), AppError> {
             let claude_dir = get_claude_config_dir();
             delete_file(&claude_dir.join("settings.json"))?;
             delete_file(&claude_dir.join("claude.json"))?;
+            delete_file(&get_claude_credentials_path())?;
             delete_file(&get_claude_mcp_path())?;
         }
         AppType::Codex => {
@@ -80,6 +143,7 @@ pub(crate) fn reset_app_live_files(app_type: &AppType) -> Result<(), AppError> {
 pub(crate) enum LiveSnapshot {
     Claude {
         settings: Option<Value>,
+        credentials: Option<Value>,
     },
     Codex {
         auth: Option<Value>,
@@ -95,12 +159,22 @@ impl LiveSnapshot {
     #[allow(dead_code)]
     pub(crate) fn restore(&self) -> Result<(), AppError> {
         match self {
-            LiveSnapshot::Claude { settings } => {
+            LiveSnapshot::Claude {
+                settings,
+                credentials,
+            } => {
                 let path = get_claude_settings_path();
                 if let Some(value) = settings {
                     write_json_file(&path, value)?;
                 } else if path.exists() {
                     delete_file(&path)?;
+                }
+
+                let credentials_path = get_claude_credentials_path();
+                if let Some(value) = credentials {
+                    write_json_file(&credentials_path, value)?;
+                } else if credentials_path.exists() {
+                    delete_file(&credentials_path)?;
                 }
             }
             LiveSnapshot::Codex { auth, config } => {
@@ -154,6 +228,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             let path = get_claude_settings_path();
             let settings = sanitize_claude_settings_for_live(&provider.settings_config);
             write_json_file(&path, &settings)?;
+            apply_claude_credentials_for_provider(provider)?;
         }
         AppType::Codex => {
             let obj = provider
@@ -462,6 +537,7 @@ fn write_claude_live_partial(provider: &Provider) -> Result<(), AppError> {
     // 5. Sanitize and write
     let settings = sanitize_claude_settings_for_live(&live);
     write_json_file(&path, &settings)?;
+    apply_claude_credentials_for_provider(provider)?;
     Ok(())
 }
 
@@ -654,6 +730,26 @@ fn backfill_claude_key_fields(live: &Value) -> Value {
     result
 }
 
+pub(crate) fn backfill_claude_meta_fields(provider: &mut Provider, live: &Value) {
+    let live_credentials = live.get("credentials");
+    match live_credentials {
+        Some(value) if value.is_object() => {
+            let meta = provider
+                .meta
+                .get_or_insert_with(crate::provider::ProviderMeta::default);
+            meta.claude_credentials = Some(value.clone());
+        }
+        Some(Value::Null) | None => {
+            if let Some(meta) = provider.meta.as_mut() {
+                meta.claude_credentials = None;
+            }
+        }
+        Some(_) => {
+            log::warn!("Skip Claude credentials backfill: live credentials is not a JSON object");
+        }
+    }
+}
+
 fn backfill_codex_key_fields(live: &Value) -> Value {
     let mut result = json!({});
     let result_obj = result.as_object_mut().unwrap();
@@ -806,7 +902,13 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
                     "Claude settings file is missing",
                 ));
             }
-            read_json_file(&path)
+            let mut settings: Value = read_json_file(&path)?;
+            if let Some(credentials) = read_claude_credentials_from_live()? {
+                if let Some(obj) = settings.as_object_mut() {
+                    obj.insert("credentials".to_string(), credentials);
+                }
+            }
+            Ok(settings)
         }
         AppType::Gemini => {
             use crate::gemini_config::{
@@ -827,8 +929,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
                 json!({})
             };
 
-            let google_accounts =
-                read_optional_json_file(&get_gemini_google_accounts_path())?;
+            let google_accounts = read_optional_json_file(&get_gemini_google_accounts_path())?;
             let oauth_creds = read_optional_json_file(&get_gemini_oauth_creds_path())?;
 
             let mut result = json!({
@@ -899,6 +1000,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
 
     let providers = state.db.get_all_providers(app_type.as_str())?;
 
+    let mut imported_claude_credentials: Option<Value> = None;
+
     let settings_config = match app_type {
         AppType::Codex => {
             let auth_path = get_codex_auth_path();
@@ -924,6 +1027,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             }
             let mut v = read_json_file::<Value>(&settings_path)?;
             let _ = normalize_claude_models_in_value(&mut v);
+            imported_claude_credentials = read_claude_credentials_from_live()?;
             v
         }
         AppType::Gemini => {
@@ -945,8 +1049,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 json!({})
             };
 
-            let google_accounts =
-                read_optional_json_file(&get_gemini_google_accounts_path())?;
+            let google_accounts = read_optional_json_file(&get_gemini_google_accounts_path())?;
             let oauth_creds = read_optional_json_file(&get_gemini_oauth_creds_path())?;
 
             let mut result = json!({
@@ -984,6 +1087,14 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     };
 
     let mut provider = Provider::with_id(provider_id, provider_name, settings_config, None);
+    if matches!(app_type, AppType::Claude) {
+        if let Some(credentials) = imported_claude_credentials {
+            let meta = provider
+                .meta
+                .get_or_insert_with(crate::provider::ProviderMeta::default);
+            meta.claude_credentials = Some(credentials);
+        }
+    }
     provider.category = Some(
         match app_type {
             AppType::Gemini if is_gemini_oauth_official_settings(&provider.settings_config) => {
@@ -1018,7 +1129,9 @@ fn generate_imported_provider_identity(
     let mut suffix = 2usize;
 
     while providers.contains_key(&candidate_id)
-        || providers.values().any(|provider| provider.name == candidate_name)
+        || providers
+            .values()
+            .any(|provider| provider.name == candidate_name)
     {
         candidate_id = format!("{id_base}-{suffix}");
         candidate_name = format!("{name_base} ({suffix})");
