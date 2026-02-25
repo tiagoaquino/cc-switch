@@ -23,6 +23,7 @@ vi.mock("@/components/providers/ProviderCard", () => ({
       onDelete,
       onDuplicate,
       onConfigureUsage,
+      onLogoutContext,
     } = props;
 
     return (
@@ -57,6 +58,14 @@ vi.mock("@/components/providers/ProviderCard", () => ({
         >
           delete
         </button>
+        {onLogoutContext && (
+          <button
+            data-testid={`logout-context-${provider.id}`}
+            onClick={() => onLogoutContext()}
+          >
+            logout
+          </button>
+        )}
         <span data-testid={`is-current-${provider.id}`}>
           {props.isCurrent ? "current" : "inactive"}
         </span>
@@ -305,5 +314,33 @@ describe("ProviderList Component", () => {
     expect(
       screen.getByText("No providers match your search."),
     ).toBeInTheDocument();
+  });
+
+  it("passes app-level logout callback to provider cards", () => {
+    const providerA = createProvider({ id: "a", name: "A" });
+    const onLogoutContext = vi.fn();
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providerA],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ a: providerA }}
+        currentProviderId="a"
+        appId="gemini"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        onLogoutContext={onLogoutContext}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("logout-context-a"));
+    expect(onLogoutContext).toHaveBeenCalledTimes(1);
   });
 });

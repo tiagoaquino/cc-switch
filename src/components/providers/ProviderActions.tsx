@@ -7,6 +7,7 @@ import {
   Minus,
   Play,
   Plus,
+  LogOut,
   Terminal,
   // TestTube2, // Hidden: stream check feature disabled
   Trash2,
@@ -34,6 +35,7 @@ interface ProviderActionsProps {
   onRemoveFromConfig?: () => void;
   onDisableOmo?: () => void;
   onOpenTerminal?: () => void;
+  onLogoutContext?: () => void;
   isAutoFailoverEnabled?: boolean;
   isInFailoverQueue?: boolean;
   onToggleFailover?: (enabled: boolean) => void;
@@ -59,6 +61,7 @@ export function ProviderActions({
   onRemoveFromConfig,
   onDisableOmo,
   onOpenTerminal,
+  onLogoutContext,
   isAutoFailoverEnabled = false,
   isInFailoverQueue = false,
   onToggleFailover,
@@ -293,6 +296,23 @@ export function ProviderActions({
             )}
           >
             <Terminal className="h-4 w-4" />
+          </Button>
+        )}
+
+        {onLogoutContext && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onLogoutContext}
+            title={t("provider.logoutContextTooltip", {
+              defaultValue: "Logout app context",
+            })}
+            className={cn(
+              iconButtonClass,
+              "hover:text-red-500 dark:hover:text-red-400",
+            )}
+          >
+            <LogOut className="h-4 w-4" />
           </Button>
         )}
 

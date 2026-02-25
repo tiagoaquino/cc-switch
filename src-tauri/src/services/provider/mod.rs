@@ -31,8 +31,8 @@ pub(crate) use live::write_live_partial;
 
 // Internal re-exports
 use live::{
-    backfill_key_fields, remove_openclaw_provider_from_live, remove_opencode_provider_from_live,
-    write_live_snapshot,
+    backfill_key_fields, merge_gemini_backfill_with_existing, remove_openclaw_provider_from_live,
+    remove_opencode_provider_from_live, reset_app_live_files, write_live_snapshot,
 };
 use usage::validate_usage_script;
 
@@ -539,9 +539,18 @@ impl ProviderService {
                     // Only backfill when switching to a different provider
                     if let Ok(live_config) = read_live_settings(app_type.clone()) {
                         if let Some(mut current_provider) = providers.get(&current_id).cloned() {
-                            // Only extract key fields from live config for backfill
-                            current_provider.settings_config =
-                                backfill_key_fields(&app_type, &live_config);
+                            // Gemini keeps additional profile-only fields (authFiles/config),
+                            // so backfill updates env from live while preserving existing fields.
+                            current_provider.settings_config = if matches!(app_type, AppType::Gemini)
+                            {
+                                merge_gemini_backfill_with_existing(
+                                    &current_provider.settings_config,
+                                    &live_config,
+                                )
+                            } else {
+                                // Other switch-mode apps only persist provider key fields.
+                                backfill_key_fields(&app_type, &live_config)
+                            };
                             if let Err(e) =
                                 state.db.save_provider(app_type.as_str(), &current_provider)
                             {
@@ -569,6 +578,40 @@ impl ProviderService {
         write_live_partial(&app_type, provider)?;
 
         Ok(result)
+    }
+
+    pub fn logout_context(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
+        if matches!(app_type, AppType::Claude | AppType::Codex | AppType::Gemini) {
+            let is_app_taken_over =
+                futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
+                    .ok()
+                    .flatten()
+                    .is_some();
+            let live_taken_over = state
+                .proxy_service
+                .detect_takeover_in_live_config_for_app(&app_type);
+            let is_proxy_running = futures::executor::block_on(state.proxy_service.is_running());
+
+            if is_proxy_running && (is_app_taken_over || live_taken_over) {
+                return Err(AppError::localized(
+                    "provider.logout_context.proxy_takeover_active",
+                    format!(
+                        "{} 当前处于代理接管模式，请先关闭代理或禁用接管后再执行 Logout",
+                        app_type.as_str()
+                    ),
+                    format!(
+                        "{} is currently in proxy takeover mode. Disable takeover or stop proxy before logout.",
+                        app_type.as_str()
+                    ),
+                ));
+            }
+        }
+
+        reset_app_live_files(&app_type)?;
+        crate::settings::set_current_provider(&app_type, None)?;
+        state.db.clear_current_provider(app_type.as_str())?;
+
+        Ok(true)
     }
 
     /// Sync current provider to live configuration (re-export)

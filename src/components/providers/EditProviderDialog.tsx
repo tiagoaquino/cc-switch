@@ -64,8 +64,12 @@ export function EditProviderDialog({
 
       // OpenCode uses additive mode - each provider's config is stored independently in DB
       // Reading live config would return the full opencode.json (with $schema, provider, mcp etc.)
-      // instead of just the provider fragment, causing incorrect nested structure on save
-      if (appId === "opencode") {
+      // instead of just the provider fragment, causing incorrect nested structure on save.
+      //
+      // Gemini current live .env can be intentionally sanitized in OAuth mode (for example, API key fields),
+      // which would hide provider-saved env entries in edit mode.
+      // For edit UX consistency, Gemini uses SSOT (database) settings as source of truth.
+      if (appId === "opencode" || appId === "gemini") {
         if (!cancelled) {
           setLiveSettings(null);
           setHasLoadedLive(true);

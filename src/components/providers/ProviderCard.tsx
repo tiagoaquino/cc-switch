@@ -40,6 +40,7 @@ interface ProviderCardProps {
   onConfigureUsage: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onDuplicate: (provider: Provider) => void;
+  onLogoutContext?: () => void;
   onTest?: (provider: Provider) => void;
   onOpenTerminal?: (provider: Provider) => void;
   isTesting?: boolean;
@@ -106,6 +107,7 @@ export function ProviderCard({
   onConfigureUsage,
   onOpenWebsite,
   onDuplicate,
+  onLogoutContext,
   onTest,
   onOpenTerminal,
   isTesting,
@@ -412,6 +414,7 @@ export function ProviderCard({
               // OpenClaw: default model
               isDefaultModel={isDefaultModel}
               onSetAsDefault={onSetAsDefault}
+              onLogoutContext={onLogoutContext}
             />
           </div>
         </div>

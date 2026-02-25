@@ -116,6 +116,24 @@ pub fn import_default_config(state: State<'_, AppState>, app: String) -> Result<
     import_default_config_internal(&state, app_type).map_err(Into::into)
 }
 
+fn logout_provider_context_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
+    ProviderService::logout_context(state, app_type)
+}
+
+#[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
+pub fn logout_provider_context_test_hook(
+    state: &AppState,
+    app_type: AppType,
+) -> Result<bool, AppError> {
+    logout_provider_context_internal(state, app_type)
+}
+
+#[tauri::command]
+pub fn logout_provider_context(state: State<'_, AppState>, app: String) -> Result<bool, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    logout_provider_context_internal(&state, app_type).map_err(Into::into)
+}
+
 #[allow(non_snake_case)]
 #[tauri::command]
 pub async fn queryProviderUsage(

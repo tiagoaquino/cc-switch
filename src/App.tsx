@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
   Settings,
@@ -19,6 +19,7 @@ import {
   Search,
   FolderOpen,
   KeyRound,
+  LogOut,
   Shield,
   Cpu,
 } from "lucide-react";
@@ -65,6 +66,8 @@ import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 import {
   useDisableCurrentOmo,
   useDisableCurrentOmoSlim,
+  omoKeys,
+  omoSlimKeys,
 } from "@/lib/query/omo";
 import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import EnvPanel from "@/components/openclaw/EnvPanel";
@@ -191,6 +194,8 @@ function App() {
 
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
+  const [showLogoutContextConfirm, setShowLogoutContextConfirm] =
+    useState(false);
   const [confirmAction, setConfirmAction] = useState<{
     provider: Provider;
     action: "remove" | "delete";
@@ -236,6 +241,14 @@ function App() {
     activeApp === "opencode" ||
     activeApp === "openclaw" ||
     activeApp === "gemini";
+  const canImportCurrentConfig =
+    activeApp === "claude" || activeApp === "codex" || activeApp === "gemini";
+  const canLogoutContext =
+    activeApp === "claude" ||
+    activeApp === "codex" ||
+    activeApp === "gemini" ||
+    activeApp === "opencode" ||
+    activeApp === "openclaw";
 
   const {
     addProvider,
@@ -672,6 +685,83 @@ function App() {
     }
   };
 
+  const importCurrentConfigMutation = useMutation({
+    mutationFn: () => providersApi.importDefault(activeApp),
+    onSuccess: async (imported) => {
+      if (!imported) {
+        return;
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ["providers", activeApp] });
+      toast.success(t("provider.importCurrentDescription"));
+
+      try {
+        await providersApi.updateTrayMenu();
+      } catch (error) {
+        console.error("[App] Failed to refresh tray menu", error);
+      }
+    },
+    onError: (error: unknown) => {
+      const detail = extractErrorMessage(error) || t("common.unknown");
+      toast.error(detail);
+    },
+  });
+
+  const logoutContextMutation = useMutation({
+    mutationFn: () => providersApi.logoutContext(activeApp),
+    onSuccess: async (ok) => {
+      if (!ok) {
+        return;
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ["providers", activeApp] });
+
+      if (activeApp === "opencode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["opencodeLiveProviderIds"],
+        });
+        await queryClient.invalidateQueries({
+          queryKey: omoKeys.currentProviderId(),
+        });
+        await queryClient.invalidateQueries({
+          queryKey: omoKeys.providerCount(),
+        });
+        await queryClient.invalidateQueries({
+          queryKey: omoSlimKeys.currentProviderId(),
+        });
+        await queryClient.invalidateQueries({
+          queryKey: omoSlimKeys.providerCount(),
+        });
+      } else if (activeApp === "openclaw") {
+        await queryClient.invalidateQueries({
+          queryKey: openclawKeys.liveProviderIds,
+        });
+      }
+
+      try {
+        await providersApi.updateTrayMenu();
+      } catch (error) {
+        console.error("[App] Failed to refresh tray menu", error);
+      }
+
+      toast.success(
+        t("notifications.logoutContextSuccess", {
+          appName: t(`apps.${activeApp}`),
+        }),
+        { closeButton: true },
+      );
+    },
+    onError: (error: unknown) => {
+      const detail = extractErrorMessage(error) || t("common.unknown");
+      toast.error(
+        t("notifications.logoutContextFailed", {
+          appName: t(`apps.${activeApp}`),
+          error: detail,
+        }),
+      );
+    },
+  });
+
   const renderContent = () => {
     const content = (() => {
       switch (currentView) {
@@ -790,8 +880,18 @@ function App() {
                         activeApp === "claude" ? handleOpenTerminal : undefined
                       }
                       onCreate={() => setIsAddOpen(true)}
+                      onImport={
+                        canImportCurrentConfig
+                          ? () => importCurrentConfigMutation.mutate()
+                          : undefined
+                      }
                       onSetAsDefault={
                         activeApp === "openclaw" ? setAsDefaultModel : undefined
+                      }
+                      onLogoutContext={
+                        canLogoutContext
+                          ? () => setShowLogoutContextConfirm(true)
+                          : undefined
                       }
                     />
                   </motion.div>
@@ -1201,6 +1301,34 @@ function App() {
                     </AnimatePresence>
                   </div>
 
+                  {canImportCurrentConfig && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => importCurrentConfigMutation.mutate()}
+                      disabled={importCurrentConfigMutation.isPending}
+                      title={t("provider.importCurrent")}
+                      className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <Download className="w-4 h-4" />
+                    </Button>
+                  )}
+
+                  {canLogoutContext && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setShowLogoutContextConfirm(true)}
+                      disabled={logoutContextMutation.isPending}
+                      title={t("provider.logoutContextTooltip", {
+                        appName: t(`apps.${activeApp}`),
+                      })}
+                      className="text-muted-foreground hover:text-red-500 hover:bg-black/5 dark:hover:bg-white/5 dark:hover:text-red-400"
+                    >
+                      <LogOut className="w-4 h-4" />
+                    </Button>
+                  )}
+
                   <Button
                     onClick={() => setIsAddOpen(true)}
                     size="icon"
@@ -1274,6 +1402,23 @@ function App() {
         }
         onConfirm={() => void handleConfirmAction()}
         onCancel={() => setConfirmAction(null)}
+      />
+
+      <ConfirmDialog
+        isOpen={showLogoutContextConfirm}
+        title={t("confirm.logoutContext", {
+          appName: t(`apps.${activeApp}`),
+        })}
+        message={t("confirm.logoutContextMessage", {
+          appName: t(`apps.${activeApp}`),
+        })}
+        onConfirm={() => {
+          if (!logoutContextMutation.isPending) {
+            logoutContextMutation.mutate();
+            setShowLogoutContextConfirm(false);
+          }
+        }}
+        onCancel={() => setShowLogoutContextConfirm(false)}
       />
 
       <DeepLinkImportDialog />

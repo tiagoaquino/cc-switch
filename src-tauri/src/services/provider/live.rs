@@ -4,11 +4,15 @@
 
 use std::collections::HashMap;
 
+use chrono::Local;
 use serde_json::{json, Value};
 
 use crate::app_config::AppType;
 use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
-use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
+use crate::config::{
+    delete_file, get_claude_config_dir, get_claude_mcp_path, get_claude_settings_path,
+    read_json_file, write_json_file,
+};
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::services::mcp::McpService;
@@ -29,6 +33,45 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
         obj.remove("openrouterCompatMode");
     }
     v
+}
+
+pub(crate) fn reset_app_live_files(app_type: &AppType) -> Result<(), AppError> {
+    match app_type {
+        AppType::Claude => {
+            let claude_dir = get_claude_config_dir();
+            delete_file(&claude_dir.join("settings.json"))?;
+            delete_file(&claude_dir.join("claude.json"))?;
+            delete_file(&get_claude_mcp_path())?;
+        }
+        AppType::Codex => {
+            delete_file(&get_codex_auth_path())?;
+            delete_file(&get_codex_config_path())?;
+        }
+        AppType::Gemini => {
+            use crate::gemini_config::{
+                get_gemini_env_path, get_gemini_google_accounts_path, get_gemini_oauth_creds_path,
+                get_gemini_settings_path,
+            };
+
+            delete_file(&get_gemini_env_path())?;
+            delete_file(&get_gemini_settings_path())?;
+            delete_file(&get_gemini_google_accounts_path())?;
+            delete_file(&get_gemini_oauth_creds_path())?;
+        }
+        AppType::OpenCode => {
+            use crate::opencode_config::{get_opencode_config_path, get_opencode_env_path};
+
+            delete_file(&get_opencode_config_path())?;
+            delete_file(&get_opencode_env_path())?;
+        }
+        AppType::OpenClaw => {
+            use crate::openclaw_config::get_openclaw_config_path;
+
+            delete_file(&get_openclaw_config_path())?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Live configuration snapshot for backup/restore
@@ -480,44 +523,21 @@ fn write_codex_live_partial(provider: &Provider) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Gemini: merge only key env fields, preserve settings.json (MCP etc.)
+/// Gemini: write provider env to live .env, preserve settings.json (MCP etc.)
 fn write_gemini_live_partial(provider: &Provider) -> Result<(), AppError> {
-    use crate::gemini_config::{get_gemini_env_path, read_gemini_env, write_gemini_env_atomic};
+    use crate::gemini_config::{json_to_env, write_gemini_env_atomic};
 
     let auth_type = detect_gemini_auth_type(provider);
 
-    // 1. Read existing env from live .env file
-    let mut env_map = if get_gemini_env_path().exists() {
-        read_gemini_env().unwrap_or_default()
-    } else {
-        HashMap::new()
-    };
-
-    // 2. Remove key fields from existing env
-    for key in GEMINI_KEY_ENV_FIELDS {
-        env_map.remove(*key);
-    }
-
-    // 3. Extract key fields from provider and merge
-    if let Some(provider_env) = provider
-        .settings_config
-        .get("env")
-        .and_then(|v| v.as_object())
-    {
-        for key in GEMINI_KEY_ENV_FIELDS {
-            if let Some(value) = provider_env.get(*key).and_then(|v| v.as_str()) {
-                if !value.is_empty() {
-                    env_map.insert(key.to_string(), value.to_string());
-                }
-            }
-        }
-    }
+    // Use provider env as source of truth for Gemini .env
+    let mut env_map = json_to_env(&provider.settings_config)?;
 
     // 4. Handle auth type specific behavior
     match auth_type {
         GeminiAuthType::GoogleOfficial => {
-            // Google official uses OAuth, clear all env
-            env_map.clear();
+            // Google official uses OAuth: remove API key fields but preserve other env vars
+            env_map.remove("GEMINI_API_KEY");
+            env_map.remove("GOOGLE_API_KEY");
             write_gemini_env_atomic(&env_map)?;
         }
         GeminiAuthType::Packycode | GeminiAuthType::Generic => {
@@ -563,6 +583,8 @@ fn write_gemini_live_partial(provider: &Provider) -> Result<(), AppError> {
         }
     }
 
+    apply_gemini_auth_files(provider)?;
+
     Ok(())
 }
 
@@ -582,6 +604,25 @@ pub(crate) fn backfill_key_fields(app_type: &AppType, live_config: &Value) -> Va
         // Additive mode: return full config (no backfill needed)
         _ => live_config.clone(),
     }
+}
+
+/// Gemini backfill should only refresh `env` from live config while preserving
+/// profile-only fields (for example `authFiles` and local `config` snapshot).
+pub(crate) fn merge_gemini_backfill_with_existing(existing: &Value, live_config: &Value) -> Value {
+    let mut merged = if existing.is_object() {
+        existing.clone()
+    } else {
+        json!({})
+    };
+
+    if let Some(live_env) = live_config.get("env").and_then(|value| value.as_object()) {
+        merged
+            .as_object_mut()
+            .unwrap()
+            .insert("env".to_string(), Value::Object(live_env.clone()));
+    }
+
+    merged
 }
 
 fn backfill_claude_key_fields(live: &Value) -> Value {
@@ -769,19 +810,11 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         }
         AppType::Gemini => {
             use crate::gemini_config::{
-                env_to_json, get_gemini_env_path, get_gemini_settings_path, read_gemini_env,
+                env_to_json, get_gemini_google_accounts_path, get_gemini_oauth_creds_path,
+                get_gemini_settings_path, read_gemini_env, read_optional_json_file,
             };
 
-            // Read .env file (environment variables)
-            let env_path = get_gemini_env_path();
-            if !env_path.exists() {
-                return Err(AppError::localized(
-                    "gemini.env.missing",
-                    "Gemini .env 文件不存在",
-                    "Gemini .env file not found",
-                ));
-            }
-
+            // Read .env file (environment variables). Missing file is valid (OAuth mode).
             let env_map = read_gemini_env()?;
             let env_json = env_to_json(&env_map);
             let env_obj = env_json.get("env").cloned().unwrap_or_else(|| json!({}));
@@ -794,11 +827,31 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
                 json!({})
             };
 
-            // Return complete structure: { "env": {...}, "config": {...} }
-            Ok(json!({
+            let google_accounts =
+                read_optional_json_file(&get_gemini_google_accounts_path())?;
+            let oauth_creds = read_optional_json_file(&get_gemini_oauth_creds_path())?;
+
+            let mut result = json!({
                 "env": env_obj,
                 "config": config_obj
-            }))
+            });
+
+            if google_accounts.is_some() || oauth_creds.is_some() {
+                let mut auth_files = serde_json::Map::new();
+                auth_files.insert("enabled".to_string(), Value::Bool(true));
+                if let Some(value) = google_accounts {
+                    auth_files.insert("googleAccounts".to_string(), value);
+                }
+                if let Some(value) = oauth_creds {
+                    auth_files.insert("oauthCreds".to_string(), value);
+                }
+                result
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("authFiles".to_string(), Value::Object(auth_files));
+            }
+
+            Ok(result)
         }
         AppType::OpenCode => {
             use crate::opencode_config::{get_opencode_config_path, read_opencode_config};
@@ -836,7 +889,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
 /// Import default configuration from live files
 ///
 /// Returns `Ok(true)` if a provider was actually imported,
-/// `Ok(false)` if skipped (providers already exist for this app).
+/// `Ok(false)` only for unsupported app types (additive mode apps).
 pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
     // Additive mode apps (OpenCode, OpenClaw) should use their dedicated
     // import_xxx_providers_from_live functions, not this generic default config import
@@ -844,12 +897,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         return Ok(false);
     }
 
-    {
-        let providers = state.db.get_all_providers(app_type.as_str())?;
-        if !providers.is_empty() {
-            return Ok(false); // 已有供应商，跳过
-        }
-    }
+    let providers = state.db.get_all_providers(app_type.as_str())?;
 
     let settings_config = match app_type {
         AppType::Codex => {
@@ -880,19 +928,11 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         }
         AppType::Gemini => {
             use crate::gemini_config::{
-                env_to_json, get_gemini_env_path, get_gemini_settings_path, read_gemini_env,
+                env_to_json, get_gemini_google_accounts_path, get_gemini_oauth_creds_path,
+                get_gemini_settings_path, read_gemini_env, read_optional_json_file,
             };
 
-            // Read .env file (environment variables)
-            let env_path = get_gemini_env_path();
-            if !env_path.exists() {
-                return Err(AppError::localized(
-                    "gemini.live.missing",
-                    "Gemini 配置文件不存在",
-                    "Gemini configuration file is missing",
-                ));
-            }
-
+            // Read .env file (environment variables). Missing file is valid (OAuth mode).
             let env_map = read_gemini_env()?;
             let env_json = env_to_json(&env_map);
             let env_obj = env_json.get("env").cloned().unwrap_or_else(|| json!({}));
@@ -905,11 +945,31 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 json!({})
             };
 
-            // Return complete structure: { "env": {...}, "config": {...} }
-            json!({
+            let google_accounts =
+                read_optional_json_file(&get_gemini_google_accounts_path())?;
+            let oauth_creds = read_optional_json_file(&get_gemini_oauth_creds_path())?;
+
+            let mut result = json!({
                 "env": env_obj,
                 "config": config_obj
-            })
+            });
+
+            if google_accounts.is_some() || oauth_creds.is_some() {
+                let mut auth_files = serde_json::Map::new();
+                auth_files.insert("enabled".to_string(), Value::Bool(true));
+                if let Some(value) = google_accounts {
+                    auth_files.insert("googleAccounts".to_string(), value);
+                }
+                if let Some(value) = oauth_creds {
+                    auth_files.insert("oauthCreds".to_string(), value);
+                }
+                result
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("authFiles".to_string(), Value::Object(auth_files));
+            }
+
+            result
         }
         // OpenCode and OpenClaw use additive mode and are handled by early return above
         AppType::OpenCode | AppType::OpenClaw => {
@@ -917,20 +977,84 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         }
     };
 
-    let mut provider = Provider::with_id(
-        "default".to_string(),
-        "default".to_string(),
-        settings_config,
-        None,
+    let (provider_id, provider_name) = if providers.is_empty() {
+        ("default".to_string(), "default".to_string())
+    } else {
+        generate_imported_provider_identity(&providers)
+    };
+
+    let mut provider = Provider::with_id(provider_id, provider_name, settings_config, None);
+    provider.category = Some(
+        match app_type {
+            AppType::Gemini if is_gemini_oauth_official_settings(&provider.settings_config) => {
+                "official"
+            }
+            _ => "custom",
+        }
+        .to_string(),
     );
-    provider.category = Some("custom".to_string());
+    provider.created_at = Some(Local::now().timestamp_millis());
 
     state.db.save_provider(app_type.as_str(), &provider)?;
+    crate::settings::set_current_provider(&app_type, Some(&provider.id))?;
     state
         .db
         .set_current_provider(app_type.as_str(), &provider.id)?;
 
     Ok(true) // 真正导入了
+}
+
+fn generate_imported_provider_identity(
+    providers: &indexmap::IndexMap<String, Provider>,
+) -> (String, String) {
+    let now = Local::now();
+    let id_base = now.format("imported-%Y%m%d-%H%M%S").to_string();
+    let name_base = now
+        .format("Imported Config (%Y-%m-%d %H:%M:%S)")
+        .to_string();
+
+    let mut candidate_id = id_base.clone();
+    let mut candidate_name = name_base.clone();
+    let mut suffix = 2usize;
+
+    while providers.contains_key(&candidate_id)
+        || providers.values().any(|provider| provider.name == candidate_name)
+    {
+        candidate_id = format!("{id_base}-{suffix}");
+        candidate_name = format!("{name_base} ({suffix})");
+        suffix += 1;
+    }
+
+    (candidate_id, candidate_name)
+}
+
+fn is_gemini_oauth_official_settings(settings_config: &Value) -> bool {
+    if settings_config
+        .pointer("/config/security/auth/selectedType")
+        .and_then(Value::as_str)
+        == Some("oauth-personal")
+    {
+        return true;
+    }
+
+    if settings_config
+        .pointer("/authFiles/enabled")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return false;
+    }
+
+    let has_gemini_api_key = settings_config
+        .pointer("/env/GEMINI_API_KEY")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+    let has_google_api_key = settings_config
+        .pointer("/env/GOOGLE_API_KEY")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+
+    !has_gemini_api_key && !has_google_api_key
 }
 
 /// Write Gemini live configuration with authentication handling
@@ -987,8 +1111,9 @@ pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
 
     match auth_type {
         GeminiAuthType::GoogleOfficial => {
-            // Google official uses OAuth, clear env
-            env_map.clear();
+            // Google official uses OAuth: remove API key fields but preserve other env vars
+            env_map.remove("GEMINI_API_KEY");
+            env_map.remove("GOOGLE_API_KEY");
             write_gemini_env_atomic(&env_map)?;
         }
         GeminiAuthType::Packycode => {
@@ -1016,6 +1141,45 @@ pub(crate) fn write_gemini_live(provider: &Provider) -> Result<(), AppError> {
             crate::gemini_config::write_packycode_settings()?;
         }
     }
+
+    apply_gemini_auth_files(provider)?;
+
+    Ok(())
+}
+
+fn apply_gemini_auth_files(provider: &Provider) -> Result<(), AppError> {
+    use crate::gemini_config::{
+        get_gemini_google_accounts_path, get_gemini_oauth_creds_path, write_or_delete_optional_json,
+    };
+
+    let Some(auth_files) = provider
+        .settings_config
+        .get("authFiles")
+        .and_then(|v| v.as_object())
+    else {
+        return Ok(());
+    };
+
+    // Only apply when profile explicitly enables OAuth auth files management.
+    if auth_files.get("enabled").and_then(|v| v.as_bool()) != Some(true) {
+        return Ok(());
+    }
+
+    let apply_entry = |field: &str, path: std::path::PathBuf| -> Result<(), AppError> {
+        match auth_files.get(field) {
+            Some(value) if value.is_null() => write_or_delete_optional_json(&path, None),
+            Some(value) if value.is_object() => write_or_delete_optional_json(&path, Some(value)),
+            Some(_) => Err(AppError::localized(
+                "gemini.validation.invalid_auth_files",
+                format!("Gemini 配置格式错误: authFiles.{field} 必须是对象或 null"),
+                format!("Gemini config invalid: authFiles.{field} must be an object or null"),
+            )),
+            None => Ok(()), // field absent => preserve current live file
+        }
+    };
+
+    apply_entry("googleAccounts", get_gemini_google_accounts_path())?;
+    apply_entry("oauthCreds", get_gemini_oauth_creds_path())?;
 
     Ok(())
 }

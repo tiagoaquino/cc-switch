@@ -1,8 +1,9 @@
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_codex_auth_path, get_codex_config_path, read_json_file, switch_provider_test_hook,
-    write_codex_live_atomic, AppError, AppType, McpApps, McpServer, MultiAppConfig, Provider,
+    get_codex_auth_path, get_codex_config_path, logout_provider_context_test_hook, read_json_file,
+    switch_provider_test_hook, write_codex_live_atomic, AppError, AppType, McpApps, McpServer,
+    MultiAppConfig, Provider,
 };
 
 #[path = "support.rs"]
@@ -366,5 +367,67 @@ fn switch_provider_codex_missing_auth_returns_error_and_keeps_state() {
     assert!(
         current_id.is_none() || current_id.as_deref() == Some("invalid"),
         "current provider should remain empty or be the attempted id on failure, got: {current_id:?}"
+    );
+}
+
+#[test]
+fn logout_provider_context_command_smoke_test() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Gemini)
+            .expect("gemini manager");
+        manager.current = "gemini-current".to_string();
+        manager.providers.insert(
+            "gemini-current".to_string(),
+            Provider::with_id(
+                "gemini-current".to_string(),
+                "Gemini Current".to_string(),
+                json!({
+                    "env": {
+                        "GEMINI_API_KEY": "gemini-key",
+                        "GOOGLE_GEMINI_BASE_URL": "https://generativelanguage.googleapis.com"
+                    },
+                    "config": {}
+                }),
+                None,
+            ),
+        );
+    }
+
+    let app_state = create_test_state_with_config(&config).expect("create test state");
+    app_state
+        .db
+        .set_current_provider("gemini", "gemini-current")
+        .expect("set current provider");
+
+    let gemini_dir = home.join(".gemini");
+    std::fs::create_dir_all(&gemini_dir).expect("create gemini dir");
+    std::fs::write(gemini_dir.join(".env"), "GEMINI_API_KEY=gemini-key\n").expect("seed .env");
+    std::fs::write(gemini_dir.join("settings.json"), r#"{"security":{}}"#)
+        .expect("seed settings.json");
+
+    let result = logout_provider_context_test_hook(&app_state, AppType::Gemini)
+        .expect("logout command should succeed");
+
+    assert!(result, "command should return true");
+    assert!(
+        !gemini_dir.join(".env").exists(),
+        "gemini .env should be removed by logout command"
+    );
+    assert!(
+        !gemini_dir.join("settings.json").exists(),
+        "gemini settings.json should be removed by logout command"
+    );
+    assert_eq!(
+        app_state
+            .db
+            .get_current_provider("gemini")
+            .expect("db current provider"),
+        None
     );
 }

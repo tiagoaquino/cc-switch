@@ -2,7 +2,7 @@ use serde_json::json;
 
 use cc_switch_lib::{
     get_claude_settings_path, read_json_file, write_codex_live_atomic, AppError, AppType, McpApps,
-    McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService,
+    McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService, AppSettings, update_settings,
 };
 
 #[path = "support.rs"]
@@ -286,7 +286,9 @@ fn switch_google_official_gemini_sets_oauth_security() {
             "google-official".to_string(),
             "Google".to_string(),
             json!({
-                "env": {}
+                "env": {
+                    "GOOGLE_CLOUD_PROJECT": "oauth-project"
+                }
             }),
             Some("https://ai.google.dev".to_string()),
         );
@@ -321,6 +323,446 @@ fn switch_google_official_gemini_sets_oauth_security() {
             .and_then(|v| v.as_str()),
         Some("oauth-personal"),
         "Gemini settings json should reflect oauth-personal for Google Official"
+    );
+
+    let env_path = home.join(".gemini").join(".env");
+    assert!(
+        env_path.exists(),
+        "Gemini .env should exist at {}",
+        env_path.display()
+    );
+    let env_raw = std::fs::read_to_string(&env_path).expect("read gemini .env");
+    assert!(
+        env_raw.contains("GOOGLE_CLOUD_PROJECT=oauth-project"),
+        "Gemini OAuth profile should preserve non-api env vars"
+    );
+    assert!(
+        !env_raw.contains("GEMINI_API_KEY="),
+        "Gemini OAuth profile should not persist GEMINI_API_KEY"
+    );
+}
+
+#[test]
+fn switch_imported_like_gemini_without_api_key_uses_oauth_security() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Gemini)
+            .expect("gemini manager");
+        manager.current = "imported-gemini".to_string();
+        manager.providers.insert(
+            "imported-gemini".to_string(),
+            Provider::with_id(
+                "imported-gemini".to_string(),
+                "Imported Config".to_string(),
+                json!({
+                    "env": {
+                        "GEMINI_MODEL": "gemini-3-pro-preview",
+                        "GOOGLE_CLOUD_PROJECT": "imported-project"
+                    },
+                    "config": {}
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    ProviderService::switch(&state, AppType::Gemini, "imported-gemini")
+        .expect("switching imported Gemini profile without API key should succeed");
+
+    let settings_path = home.join(".gemini").join("settings.json");
+    assert!(
+        settings_path.exists(),
+        "Gemini settings.json should exist at {}",
+        settings_path.display()
+    );
+    let raw = std::fs::read_to_string(&settings_path).expect("read gemini settings.json");
+    let value: serde_json::Value =
+        serde_json::from_str(&raw).expect("parse gemini settings.json after switch");
+
+    assert_eq!(
+        value
+            .pointer("/security/auth/selectedType")
+            .and_then(|v| v.as_str()),
+        Some("oauth-personal"),
+        "Imported-like OAuth Gemini profile should set oauth-personal"
+    );
+
+    let env_path = home.join(".gemini").join(".env");
+    assert!(
+        env_path.exists(),
+        "Gemini .env should exist at {}",
+        env_path.display()
+    );
+    let env_raw = std::fs::read_to_string(&env_path).expect("read gemini .env");
+    assert!(
+        env_raw.contains("GOOGLE_CLOUD_PROJECT=imported-project"),
+        "Imported-like OAuth Gemini profile should keep custom .env entries"
+    );
+    assert!(
+        env_raw.contains("GEMINI_MODEL=gemini-3-pro-preview"),
+        "Imported-like OAuth Gemini profile should keep model in .env"
+    );
+}
+
+#[test]
+fn switch_gemini_backfill_preserves_profile_fields_when_switching_away() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Gemini)
+            .expect("gemini manager");
+        manager.current = "imported-x".to_string();
+        manager.providers.insert(
+            "imported-x".to_string(),
+            Provider::with_id(
+                "imported-x".to_string(),
+                "Imported Config".to_string(),
+                json!({
+                    "env": {
+                        "GOOGLE_CLOUD_PROJECT": "project-x",
+                        "GOOGLE_CLOUD_LOCATION": "us-central1",
+                        "GEMINI_MODEL": "gemini-3.1-pro-preview"
+                    },
+                    "config": {
+                        "customSetting": "keep-me"
+                    },
+                    "authFiles": {
+                        "enabled": true,
+                        "googleAccounts": {
+                            "accounts": [{ "email": "imported@example.com" }]
+                        }
+                    }
+                }),
+                Some("https://ai.google.dev".to_string()),
+            ),
+        );
+        manager.providers.insert(
+            "api-y".to_string(),
+            Provider::with_id(
+                "api-y".to_string(),
+                "API Provider".to_string(),
+                json!({
+                    "env": {
+                        "GEMINI_API_KEY": "sk-api-y",
+                        "GOOGLE_GEMINI_BASE_URL": "https://api.example.com",
+                        "GEMINI_MODEL": "gemini-2.5-pro"
+                    }
+                }),
+                Some("https://api.example.com".to_string()),
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    // Seed Gemini live files from imported profile, then switch away to trigger backfill.
+    ProviderService::switch(&state, AppType::Gemini, "imported-x")
+        .expect("switch to imported provider should succeed");
+    ProviderService::switch(&state, AppType::Gemini, "api-y")
+        .expect("switch to api provider should succeed");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Gemini.as_str())
+        .expect("read providers");
+    assert_eq!(providers.len(), 2, "switch should not remove providers");
+
+    let imported = providers
+        .get("imported-x")
+        .expect("imported provider should still exist");
+
+    assert_eq!(
+        imported
+            .settings_config
+            .pointer("/env/GOOGLE_CLOUD_PROJECT")
+            .and_then(|v| v.as_str()),
+        Some("project-x"),
+        "backfill should keep full Gemini env (GOOGLE_CLOUD_PROJECT)"
+    );
+    assert_eq!(
+        imported
+            .settings_config
+            .pointer("/env/GOOGLE_CLOUD_LOCATION")
+            .and_then(|v| v.as_str()),
+        Some("us-central1"),
+        "backfill should keep non-whitelisted Gemini env fields"
+    );
+    assert_eq!(
+        imported
+            .settings_config
+            .pointer("/config/customSetting")
+            .and_then(|v| v.as_str()),
+        Some("keep-me"),
+        "backfill should preserve existing Gemini config snapshot"
+    );
+    assert_eq!(
+        imported
+            .settings_config
+            .pointer("/authFiles/enabled")
+            .and_then(|v| v.as_bool()),
+        Some(true),
+        "backfill should preserve authFiles management settings"
+    );
+    assert_eq!(
+        imported
+            .settings_config
+            .pointer("/authFiles/googleAccounts/accounts/0/email")
+            .and_then(|v| v.as_str()),
+        Some("imported@example.com"),
+        "backfill should preserve authFiles payload"
+    );
+}
+
+#[test]
+fn switch_gemini_with_auth_files_enabled_writes_both_files() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Gemini)
+            .expect("gemini manager");
+        manager.current = "oauth-profile".to_string();
+        manager.providers.insert(
+            "oauth-profile".to_string(),
+            Provider::with_id(
+                "oauth-profile".to_string(),
+                "Google OAuth".to_string(),
+                json!({
+                    "env": {},
+                    "authFiles": {
+                        "enabled": true,
+                        "googleAccounts": { "accounts": [{ "email": "a@b.com" }] },
+                        "oauthCreds": { "refresh_token": "rt-1" }
+                    }
+                }),
+                Some("https://ai.google.dev".to_string()),
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    ProviderService::switch(&state, AppType::Gemini, "oauth-profile")
+        .expect("switch should succeed");
+
+    let google_accounts: serde_json::Value =
+        read_json_file(&home.join(".gemini").join("google_accounts.json"))
+            .expect("read google_accounts");
+    let oauth_creds: serde_json::Value =
+        read_json_file(&home.join(".gemini").join("oauth_creds.json")).expect("read oauth_creds");
+
+    assert_eq!(
+        google_accounts
+            .pointer("/accounts/0/email")
+            .and_then(|v| v.as_str()),
+        Some("a@b.com")
+    );
+    assert_eq!(
+        oauth_creds
+            .get("refresh_token")
+            .and_then(|v| v.as_str()),
+        Some("rt-1")
+    );
+}
+
+#[test]
+fn switch_gemini_with_auth_files_disabled_preserves_existing_files() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let gemini_dir = home.join(".gemini");
+    std::fs::create_dir_all(&gemini_dir).expect("create gemini dir");
+    std::fs::write(
+        gemini_dir.join("google_accounts.json"),
+        serde_json::to_string_pretty(&json!({ "accounts": [{ "email": "keep@x.com" }] }))
+            .expect("serialize google_accounts"),
+    )
+    .expect("seed google_accounts");
+    std::fs::write(
+        gemini_dir.join("oauth_creds.json"),
+        serde_json::to_string_pretty(&json!({ "refresh_token": "keep-rt" }))
+            .expect("serialize oauth_creds"),
+    )
+    .expect("seed oauth_creds");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Gemini)
+            .expect("gemini manager");
+        manager.current = "api-profile".to_string();
+        manager.providers.insert(
+            "api-profile".to_string(),
+            Provider::with_id(
+                "api-profile".to_string(),
+                "API Key Profile".to_string(),
+                json!({
+                    "env": {
+                        "GEMINI_API_KEY": "k1",
+                        "GOOGLE_GEMINI_BASE_URL": "https://www.packyapi.com"
+                    },
+                    "authFiles": {
+                        "enabled": false,
+                        "googleAccounts": { "accounts": [{ "email": "new@x.com" }] },
+                        "oauthCreds": { "refresh_token": "new-rt" }
+                    }
+                }),
+                Some("https://www.packyapi.com".to_string()),
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    ProviderService::switch(&state, AppType::Gemini, "api-profile")
+        .expect("switch should succeed");
+
+    let google_accounts: serde_json::Value =
+        read_json_file(&home.join(".gemini").join("google_accounts.json"))
+            .expect("read google_accounts");
+    let oauth_creds: serde_json::Value =
+        read_json_file(&home.join(".gemini").join("oauth_creds.json")).expect("read oauth_creds");
+
+    assert_eq!(
+        google_accounts
+            .pointer("/accounts/0/email")
+            .and_then(|v| v.as_str()),
+        Some("keep@x.com")
+    );
+    assert_eq!(
+        oauth_creds
+            .get("refresh_token")
+            .and_then(|v| v.as_str()),
+        Some("keep-rt")
+    );
+}
+
+#[test]
+fn switch_gemini_with_auth_files_null_deletes_target_file() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let gemini_dir = home.join(".gemini");
+    std::fs::create_dir_all(&gemini_dir).expect("create gemini dir");
+    std::fs::write(
+        gemini_dir.join("google_accounts.json"),
+        serde_json::to_string_pretty(&json!({ "accounts": [{ "email": "old@x.com" }] }))
+            .expect("serialize google_accounts"),
+    )
+    .expect("seed google_accounts");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Gemini)
+            .expect("gemini manager");
+        manager.current = "oauth-profile".to_string();
+        manager.providers.insert(
+            "oauth-profile".to_string(),
+            Provider::with_id(
+                "oauth-profile".to_string(),
+                "Google OAuth".to_string(),
+                json!({
+                    "env": {},
+                    "authFiles": {
+                        "enabled": true,
+                        "googleAccounts": null
+                    }
+                }),
+                Some("https://ai.google.dev".to_string()),
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    ProviderService::switch(&state, AppType::Gemini, "oauth-profile")
+        .expect("switch should succeed");
+
+    assert!(
+        !home.join(".gemini").join("google_accounts.json").exists(),
+        "google_accounts.json should be removed when value is null"
+    );
+}
+
+#[test]
+fn switch_gemini_with_auth_files_partial_only_updates_specified_file() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let gemini_dir = home.join(".gemini");
+    std::fs::create_dir_all(&gemini_dir).expect("create gemini dir");
+    std::fs::write(
+        gemini_dir.join("google_accounts.json"),
+        serde_json::to_string_pretty(&json!({ "accounts": [{ "email": "old@x.com" }] }))
+            .expect("serialize google_accounts"),
+    )
+    .expect("seed google_accounts");
+    std::fs::write(
+        gemini_dir.join("oauth_creds.json"),
+        serde_json::to_string_pretty(&json!({ "refresh_token": "keep-rt" }))
+            .expect("serialize oauth_creds"),
+    )
+    .expect("seed oauth_creds");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Gemini)
+            .expect("gemini manager");
+        manager.current = "oauth-profile".to_string();
+        manager.providers.insert(
+            "oauth-profile".to_string(),
+            Provider::with_id(
+                "oauth-profile".to_string(),
+                "Google OAuth".to_string(),
+                json!({
+                    "env": {},
+                    "authFiles": {
+                        "enabled": true,
+                        "googleAccounts": { "accounts": [{ "email": "new@x.com" }] }
+                    }
+                }),
+                Some("https://ai.google.dev".to_string()),
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    ProviderService::switch(&state, AppType::Gemini, "oauth-profile")
+        .expect("switch should succeed");
+
+    let google_accounts: serde_json::Value =
+        read_json_file(&home.join(".gemini").join("google_accounts.json"))
+            .expect("read google_accounts");
+    let oauth_creds: serde_json::Value =
+        read_json_file(&home.join(".gemini").join("oauth_creds.json")).expect("read oauth_creds");
+
+    assert_eq!(
+        google_accounts
+            .pointer("/accounts/0/email")
+            .and_then(|v| v.as_str()),
+        Some("new@x.com")
+    );
+    assert_eq!(
+        oauth_creds
+            .get("refresh_token")
+            .and_then(|v| v.as_str()),
+        Some("keep-rt"),
+        "oauth_creds should be preserved when field is absent"
     );
 }
 
@@ -656,4 +1098,435 @@ fn provider_service_delete_current_provider_returns_error() {
         ),
         other => panic!("expected Config/Message error, got {other:?}"),
     }
+}
+
+fn create_basic_provider(app_type: AppType, id: &str) -> Provider {
+    match app_type {
+        AppType::Claude => Provider::with_id(
+            id.to_string(),
+            "Claude Provider".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "claude-key",
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+                }
+            }),
+            None,
+        ),
+        AppType::Codex => Provider::with_id(
+            id.to_string(),
+            "Codex Provider".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "codex-key"
+                },
+                "config": r#"model_provider = "openai"
+model = "gpt-4o-mini"
+[model_providers.openai]
+name = "OpenAI"
+base_url = "https://api.openai.com/v1"
+env_key = "OPENAI_API_KEY"
+"#
+            }),
+            None,
+        ),
+        AppType::Gemini => Provider::with_id(
+            id.to_string(),
+            "Gemini Provider".to_string(),
+            json!({
+                "env": {
+                    "GEMINI_API_KEY": "gemini-key",
+                    "GOOGLE_GEMINI_BASE_URL": "https://generativelanguage.googleapis.com"
+                },
+                "config": {}
+            }),
+            None,
+        ),
+        AppType::OpenCode => Provider::with_id(
+            id.to_string(),
+            "OpenCode Provider".to_string(),
+            json!({
+                "npm": "@openrouter/ai-sdk-provider",
+                "options": {
+                    "apiKey": "open-code-key",
+                    "baseURL": "https://openrouter.ai/api/v1"
+                },
+                "models": {
+                    "default": {
+                        "name": "openai/gpt-4o-mini"
+                    }
+                }
+            }),
+            None,
+        ),
+        AppType::OpenClaw => Provider::with_id(
+            id.to_string(),
+            "OpenClaw Provider".to_string(),
+            json!({
+                "baseUrl": "https://api.openai.com/v1",
+                "apiKey": "openclaw-key",
+                "api": "openai",
+                "models": [
+                    {
+                        "id": "gpt-4o-mini"
+                    }
+                ]
+            }),
+            None,
+        ),
+    }
+}
+
+fn create_config_with_current(app_type: AppType, provider_id: &str) -> MultiAppConfig {
+    let mut config = MultiAppConfig::default();
+    let manager = config
+        .get_manager_mut(&app_type)
+        .expect("app manager should exist");
+    manager.current = provider_id.to_string();
+    manager.providers.insert(
+        provider_id.to_string(),
+        create_basic_provider(app_type, provider_id),
+    );
+    config
+}
+
+fn seed_live_file(path: &std::path::Path, content: &str) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("create parent dir");
+    }
+    std::fs::write(path, content).expect("seed live file");
+}
+
+#[test]
+fn logout_context_claude_deletes_live_files_and_clears_current() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    seed_live_file(
+        &home.join(".claude").join("settings.json"),
+        r#"{"env":{"ANTHROPIC_API_KEY":"x"}}"#,
+    );
+    seed_live_file(
+        &home.join(".claude").join("claude.json"),
+        r#"{"env":{"ANTHROPIC_API_KEY":"x"}}"#,
+    );
+    seed_live_file(&home.join(".claude.json"), r#"{"mcpServers":{}}"#);
+
+    let config = create_config_with_current(AppType::Claude, "claude-current");
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_current_provider("claude", "claude-current")
+        .expect("set current provider");
+    assert_eq!(
+        ProviderService::current(&state, AppType::Claude).expect("current"),
+        "claude-current"
+    );
+
+    ProviderService::logout_context(&state, AppType::Claude).expect("logout should succeed");
+
+    assert!(
+        !home.join(".claude").join("settings.json").exists(),
+        "settings.json should be deleted"
+    );
+    assert!(
+        !home.join(".claude").join("claude.json").exists(),
+        "claude.json should be deleted"
+    );
+    assert!(
+        !home.join(".claude.json").exists(),
+        "~/.claude.json should be deleted"
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider("claude")
+            .expect("db current provider"),
+        None
+    );
+    assert_eq!(
+        ProviderService::current(&state, AppType::Claude).expect("effective current"),
+        ""
+    );
+}
+
+#[test]
+fn logout_context_codex_deletes_live_files_and_clears_current() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    seed_live_file(
+        &home.join(".codex").join("auth.json"),
+        r#"{"OPENAI_API_KEY":"x"}"#,
+    );
+    seed_live_file(
+        &home.join(".codex").join("config.toml"),
+        r#"model_provider = "openai""#,
+    );
+
+    let config = create_config_with_current(AppType::Codex, "codex-current");
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_current_provider("codex", "codex-current")
+        .expect("set current provider");
+    assert_eq!(
+        ProviderService::current(&state, AppType::Codex).expect("current"),
+        "codex-current"
+    );
+
+    ProviderService::logout_context(&state, AppType::Codex).expect("logout should succeed");
+
+    assert!(
+        !home.join(".codex").join("auth.json").exists(),
+        "auth.json should be deleted"
+    );
+    assert!(
+        !home.join(".codex").join("config.toml").exists(),
+        "config.toml should be deleted"
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider("codex")
+            .expect("db current provider"),
+        None
+    );
+    assert_eq!(
+        ProviderService::current(&state, AppType::Codex).expect("effective current"),
+        ""
+    );
+}
+
+#[test]
+fn logout_context_gemini_deletes_live_files_and_clears_current() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    seed_live_file(
+        &home.join(".gemini").join(".env"),
+        "GEMINI_API_KEY=gemini-key\n",
+    );
+    seed_live_file(&home.join(".gemini").join("settings.json"), r#"{"security":{}}"#);
+    seed_live_file(
+        &home.join(".gemini").join("google_accounts.json"),
+        r#"{"accounts":[]}"#,
+    );
+    seed_live_file(
+        &home.join(".gemini").join("oauth_creds.json"),
+        r#"{"refresh_token":"x"}"#,
+    );
+
+    let config = create_config_with_current(AppType::Gemini, "gemini-current");
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_current_provider("gemini", "gemini-current")
+        .expect("set current provider");
+    assert_eq!(
+        ProviderService::current(&state, AppType::Gemini).expect("current"),
+        "gemini-current"
+    );
+
+    ProviderService::logout_context(&state, AppType::Gemini).expect("logout should succeed");
+
+    assert!(
+        !home.join(".gemini").join(".env").exists(),
+        ".env should be deleted"
+    );
+    assert!(
+        !home.join(".gemini").join("settings.json").exists(),
+        "settings.json should be deleted"
+    );
+    assert!(
+        !home.join(".gemini").join("google_accounts.json").exists(),
+        "google_accounts.json should be deleted"
+    );
+    assert!(
+        !home.join(".gemini").join("oauth_creds.json").exists(),
+        "oauth_creds.json should be deleted"
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider("gemini")
+            .expect("db current provider"),
+        None
+    );
+    assert_eq!(
+        ProviderService::current(&state, AppType::Gemini).expect("effective current"),
+        ""
+    );
+}
+
+#[test]
+fn logout_context_opencode_deletes_live_files_and_clears_current_flags() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let mut settings = AppSettings::default();
+    settings.opencode_config_dir = Some(
+        home.join(".config")
+            .join("opencode")
+            .to_string_lossy()
+            .to_string(),
+    );
+    update_settings(settings).expect("set opencode test override");
+
+    seed_live_file(
+        &home.join(".config").join("opencode").join("opencode.json"),
+        r#"{"provider":{}}"#,
+    );
+    seed_live_file(
+        &home.join(".config").join("opencode").join(".env"),
+        "OPENCODE_API_KEY=key\n",
+    );
+
+    let config = create_config_with_current(AppType::OpenCode, "opencode-current");
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_current_provider("opencode", "opencode-current")
+        .expect("set current provider");
+    assert_eq!(
+        state
+            .db
+            .get_current_provider("opencode")
+            .expect("db current provider")
+            .as_deref(),
+        Some("opencode-current")
+    );
+
+    ProviderService::logout_context(&state, AppType::OpenCode).expect("logout should succeed");
+
+    assert!(
+        !home.join(".config").join("opencode").join("opencode.json").exists(),
+        "opencode.json should be deleted"
+    );
+    assert!(
+        !home.join(".config").join("opencode").join(".env").exists(),
+        ".env should be deleted"
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider("opencode")
+            .expect("db current provider"),
+        None
+    );
+}
+
+#[test]
+fn logout_context_openclaw_deletes_live_files_and_clears_current_flags() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let mut settings = AppSettings::default();
+    settings.openclaw_config_dir = Some(
+        home.join(".openclaw")
+            .to_string_lossy()
+            .to_string(),
+    );
+    update_settings(settings).expect("set openclaw test override");
+
+    seed_live_file(
+        &home.join(".openclaw").join("openclaw.json"),
+        r#"{"providers":{}}"#,
+    );
+
+    let config = create_config_with_current(AppType::OpenClaw, "openclaw-current");
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_current_provider("openclaw", "openclaw-current")
+        .expect("set current provider");
+    assert_eq!(
+        state
+            .db
+            .get_current_provider("openclaw")
+            .expect("db current provider")
+            .as_deref(),
+        Some("openclaw-current")
+    );
+
+    ProviderService::logout_context(&state, AppType::OpenClaw).expect("logout should succeed");
+
+    assert!(
+        !home.join(".openclaw").join("openclaw.json").exists(),
+        "openclaw.json should be deleted"
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider("openclaw")
+            .expect("db current provider"),
+        None
+    );
+}
+
+#[test]
+fn logout_context_missing_files_succeeds_idempotently() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let config = create_config_with_current(AppType::Gemini, "gemini-current");
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_current_provider("gemini", "gemini-current")
+        .expect("set current provider");
+
+    let result =
+        ProviderService::logout_context(&state, AppType::Gemini).expect("logout should succeed");
+
+    assert!(result, "logout should return true");
+    assert_eq!(
+        state
+            .db
+            .get_current_provider("gemini")
+            .expect("db current provider"),
+        None
+    );
+}
+
+#[test]
+fn logout_context_blocks_when_proxy_takeover_active_for_switch_mode_apps() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let config = create_config_with_current(AppType::Claude, "claude-current");
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create tokio runtime");
+
+    runtime
+        .block_on(state.db.save_live_backup(
+            "claude",
+            r#"{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:15721"}}"#,
+        ))
+        .expect("seed live backup");
+    runtime
+        .block_on(state.proxy_service.start())
+        .expect("start proxy");
+
+    let result = ProviderService::logout_context(&state, AppType::Claude);
+
+    let _ = runtime.block_on(state.proxy_service.stop());
+
+    let err = result.expect_err("logout should be blocked during takeover");
+    let err_message = err.to_string();
+    assert!(
+        err_message.contains("proxy takeover mode")
+            || err_message.contains("代理接管模式")
+            || err_message.contains("takeover"),
+        "unexpected error message: {err_message}"
+    );
 }

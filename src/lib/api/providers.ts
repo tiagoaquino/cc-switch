@@ -58,6 +58,10 @@ export const providersApi = {
     return await invoke("import_default_config", { app: appId });
   },
 
+  async logoutContext(appId: AppId): Promise<boolean> {
+    return await invoke("logout_provider_context", { app: appId });
+  },
+
   async updateTrayMenu(): Promise<boolean> {
     return await invoke("update_tray_menu");
   },

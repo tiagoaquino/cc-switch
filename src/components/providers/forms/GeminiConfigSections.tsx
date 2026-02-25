@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import JsonEditor from "@/components/JsonEditor";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 
 interface GeminiEnvSectionProps {
   value: string;
@@ -145,6 +147,123 @@ export const GeminiConfigSection: React.FC<GeminiConfigSectionProps> = ({
             defaultValue: "使用 JSON 格式配置 Gemini 扩展参数（可选）",
           })}
         </p>
+      )}
+    </div>
+  );
+};
+
+interface GeminiAuthFilesSectionProps {
+  enabled: boolean;
+  onEnabledChange: (enabled: boolean) => void;
+  googleAccountsValue: string;
+  oauthCredsValue: string;
+  onGoogleAccountsChange: (value: string) => void;
+  onOauthCredsChange: (value: string) => void;
+  googleAccountsError?: string;
+  oauthCredsError?: string;
+}
+
+export const GeminiAuthFilesSection: React.FC<GeminiAuthFilesSectionProps> = ({
+  enabled,
+  onEnabledChange,
+  googleAccountsValue,
+  oauthCredsValue,
+  onGoogleAccountsChange,
+  onOauthCredsChange,
+  googleAccountsError,
+  oauthCredsError,
+}) => {
+  const { t } = useTranslation();
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
+  useEffect(() => {
+    setIsDarkMode(document.documentElement.classList.contains("dark"));
+
+    const observer = new MutationObserver(() => {
+      setIsDarkMode(document.documentElement.classList.contains("dark"));
+    });
+
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div className="space-y-3 rounded-lg border border-border/60 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="space-y-1">
+          <Label htmlFor="gemini-auth-files-toggle" className="text-sm font-medium">
+            {t("geminiConfig.authFiles.title", {
+              defaultValue: "OAuth Auth Files",
+            })}
+          </Label>
+          <p className="text-xs text-muted-foreground">
+            {t("geminiConfig.authFiles.hint", {
+              defaultValue:
+                "When enabled, switching to this profile will apply google_accounts.json and oauth_creds.json.",
+            })}
+          </p>
+        </div>
+        <Switch
+          id="gemini-auth-files-toggle"
+          checked={enabled}
+          onCheckedChange={onEnabledChange}
+        />
+      </div>
+
+      {enabled && (
+        <div className="space-y-4 pt-2">
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-foreground">
+              {t("geminiConfig.authFiles.googleAccounts", {
+                defaultValue: "google_accounts.json",
+              })}
+            </label>
+            <JsonEditor
+              value={googleAccountsValue}
+              onChange={onGoogleAccountsChange}
+              placeholder={`{
+  "accounts": []
+}`}
+              darkMode={isDarkMode}
+              rows={8}
+              showValidation={true}
+              language="json"
+            />
+            {googleAccountsError && (
+              <p className="text-xs text-red-500 dark:text-red-400">
+                {googleAccountsError}
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-foreground">
+              {t("geminiConfig.authFiles.oauthCreds", {
+                defaultValue: "oauth_creds.json",
+              })}
+            </label>
+            <JsonEditor
+              value={oauthCredsValue}
+              onChange={onOauthCredsChange}
+              placeholder={`{
+  "access_token": ""
+}`}
+              darkMode={isDarkMode}
+              rows={8}
+              showValidation={true}
+              language="json"
+            />
+            {oauthCredsError && (
+              <p className="text-xs text-red-500 dark:text-red-400">
+                {oauthCredsError}
+              </p>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

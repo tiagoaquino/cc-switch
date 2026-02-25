@@ -37,6 +37,9 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     apiKeyUrl: "https://aistudio.google.com/apikey",
     settingsConfig: {
       env: {},
+      authFiles: {
+        enabled: true,
+      },
     },
     description: "Google 官方 Gemini API (OAuth)",
     category: "official",

@@ -165,6 +165,10 @@ export const setCurrentProviderId = (appType: AppId, providerId: string) => {
   current[appType] = providerId;
 };
 
+export const clearCurrentProviderId = (appType: AppId) => {
+  current[appType] = "";
+};
+
 export const updateProviders = (
   appType: AppId,
   data: Record<string, Provider>,

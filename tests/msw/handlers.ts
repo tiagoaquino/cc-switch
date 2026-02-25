@@ -8,6 +8,7 @@ import {
   getProviders,
   listProviders,
   resetProviderState,
+  clearCurrentProviderId,
   setCurrentProviderId,
   updateProvider,
   updateSortOrder,
@@ -100,6 +101,12 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/import_default_config`, async () => {
     resetProviderState();
+    return success(true);
+  }),
+
+  http.post(`${TAURI_ENDPOINT}/logout_provider_context`, async ({ request }) => {
+    const { app } = await withJson<{ app: AppId }>(request);
+    clearCurrentProviderId(app);
     return success(true);
   }),
 

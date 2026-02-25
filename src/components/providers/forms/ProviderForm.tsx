@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type { AppId } from "@/lib/api";
 import type {
@@ -88,6 +89,7 @@ import {
   OPENCLAW_DEFAULT_CONFIG,
   normalizePricingSource,
 } from "./helpers/opencodeFormUtils";
+import { buildGeminiSettingsConfig } from "./helpers/geminiSettings";
 
 type PresetEntry = {
   id: string;
@@ -118,6 +120,18 @@ interface ProviderFormProps {
     iconColor?: string;
   };
   showButtons?: boolean;
+}
+
+const OFFICIAL_SWITCH_APPS: ReadonlySet<AppId> = new Set([
+  "claude",
+  "codex",
+  "gemini",
+]);
+
+function isOfficialSwitchEligibleCategory(category?: ProviderCategory) {
+  return (
+    category === undefined || category === "official" || category === "custom"
+  );
 }
 
 export function ProviderForm({
@@ -183,7 +197,34 @@ export function ProviderForm({
     selectedPresetId,
     isEditMode,
     initialCategory: initialData?.category,
+    initialSettingsConfig: initialData?.settingsConfig,
   });
+  const isOfficialSwitchApp = OFFICIAL_SWITCH_APPS.has(appId);
+  const shouldShowOfficialApiSwitch =
+    isOfficialSwitchApp && isOfficialSwitchEligibleCategory(category);
+  const [officialApiEnabled, setOfficialApiEnabled] = useState(false);
+
+  useEffect(() => {
+    if (!shouldShowOfficialApiSwitch) {
+      setOfficialApiEnabled(false);
+      return;
+    }
+    setOfficialApiEnabled(category === "official");
+  }, [shouldShowOfficialApiSwitch, category]);
+
+  const effectiveCategory = useMemo<ProviderCategory | undefined>(() => {
+    if (!shouldShowOfficialApiSwitch) {
+      return category;
+    }
+    if (officialApiEnabled) {
+      return "official";
+    }
+    if (category === "official" || category === undefined) {
+      return "custom";
+    }
+    return category;
+  }, [shouldShowOfficialApiSwitch, officialApiEnabled, category]);
+
   const isOmoCategory = appId === "opencode" && category === "omo";
   const isOmoSlimCategory = appId === "opencode" && category === "omo-slim";
   const isAnyOmoCategory = isOmoCategory || isOmoSlimCategory;
@@ -301,14 +342,14 @@ export function ProviderForm({
     initialConfig: form.getValues("settingsConfig"),
     onConfigChange: (config) => form.setValue("settingsConfig", config),
     selectedPresetId,
-    category,
+    category: effectiveCategory,
     appType: appId,
     apiKeyField: appId === "claude" ? localApiKeyField : undefined,
   });
 
   const { baseUrl, handleClaudeBaseUrlChange } = useBaseUrlState({
     appType: appId,
-    category,
+    category: effectiveCategory,
     settingsConfig: form.getValues("settingsConfig"),
     codexConfig: "",
     onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
@@ -427,16 +468,24 @@ export function ProviderForm({
   const {
     geminiEnv,
     geminiConfig,
+    manageAuthFiles,
+    googleAccountsJson,
+    oauthCredsJson,
     geminiApiKey,
     geminiBaseUrl,
     geminiModel,
     envError,
     configError: geminiConfigError,
+    googleAccountsError,
+    oauthCredsError,
     handleGeminiApiKeyChange: originalHandleGeminiApiKeyChange,
     handleGeminiBaseUrlChange: originalHandleGeminiBaseUrlChange,
     handleGeminiModelChange: originalHandleGeminiModelChange,
     handleGeminiEnvChange,
     handleGeminiConfigChange,
+    handleManageAuthFilesChange,
+    handleGoogleAccountsJsonChange,
+    handleOauthCredsJsonChange,
     resetGeminiConfig,
     envStringToObj,
   } = useGeminiConfigState({
@@ -517,7 +566,7 @@ export function ProviderForm({
     queriedOmoGlobalConfig,
     isEditMode,
     appId,
-    category,
+    category: effectiveCategory,
   });
 
   const openclawForm = useOpenclawFormState({
@@ -598,7 +647,7 @@ export function ProviderForm({
 
     // 非官方供应商必填校验：端点和 API Key
     // cloud_provider（如 Bedrock）通过模板变量处理认证，跳过通用校验
-    if (category !== "official" && category !== "cloud_provider") {
+    if (effectiveCategory !== "official" && effectiveCategory !== "cloud_provider") {
       if (appId === "claude") {
         if (!baseUrl.trim()) {
           toast.error(
@@ -668,12 +717,31 @@ export function ProviderForm({
       }
     } else if (appId === "gemini") {
       try {
+        if (manageAuthFiles && (googleAccountsError || oauthCredsError)) {
+          toast.error(
+            t("geminiConfig.authFiles.invalidJson", {
+              defaultValue:
+                "OAuth auth files JSON format error, please check syntax",
+            }),
+          );
+          return;
+        }
         const envObj = envStringToObj(geminiEnv);
         const configObj = geminiConfig.trim() ? JSON.parse(geminiConfig) : {};
-        const combined = {
+        const googleAccounts = googleAccountsJson.trim()
+          ? (JSON.parse(googleAccountsJson) as Record<string, unknown>)
+          : undefined;
+        const oauthCreds = oauthCredsJson.trim()
+          ? (JSON.parse(oauthCredsJson) as Record<string, unknown>)
+          : undefined;
+
+        const combined = buildGeminiSettingsConfig({
           env: envObj,
           config: configObj,
-        };
+          manageAuthFiles,
+          googleAccounts,
+          oauthCreds,
+        });
         settingsConfig = JSON.stringify(combined);
       } catch (err) {
         settingsConfig = values.settingsConfig.trim();
@@ -762,6 +830,13 @@ export function ProviderForm({
       }
     }
 
+    const isOfficialSwitchControlled =
+      isOfficialSwitchApp && shouldShowOfficialApiSwitch;
+    if (isOfficialSwitchControlled) {
+      payload.presetCategory = effectiveCategory;
+      delete payload.isPartner;
+    }
+
     if (!isEditMode && draftCustomEndpoints.length > 0) {
       const customEndpointsToSave: Record<
         string,
@@ -819,14 +894,23 @@ export function ProviderForm({
           ? pricingConfig.pricingModelSource
           : undefined,
       apiFormat:
-        appId === "claude" && category !== "official"
+        appId === "claude" && effectiveCategory !== "official"
           ? localApiFormat
           : undefined,
       apiKeyField:
-        appId === "claude" && category !== "official"
+        appId === "claude" && effectiveCategory !== "official"
           ? localApiKeyField
           : undefined,
     };
+
+    if (isOfficialSwitchControlled && payload.meta) {
+      const {
+        isPartner: _isPartnerMeta,
+        partnerPromotionKey: _partnerPromotionKeyMeta,
+        ...metaWithoutPartner
+      } = payload.meta;
+      payload.meta = metaWithoutPartner;
+    }
 
     onSubmit(payload);
   };
@@ -849,7 +933,7 @@ export function ProviderForm({
   }, [groupedPresets]);
 
   const shouldShowSpeedTest =
-    category !== "official" && category !== "cloud_provider";
+    effectiveCategory !== "official" && effectiveCategory !== "cloud_provider";
 
   const {
     shouldShowApiKeyLink: shouldShowClaudeApiKeyLink,
@@ -858,7 +942,7 @@ export function ProviderForm({
     partnerPromotionKey: claudePartnerPromotionKey,
   } = useApiKeyLink({
     appId: "claude",
-    category,
+    category: effectiveCategory,
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
@@ -871,7 +955,7 @@ export function ProviderForm({
     partnerPromotionKey: codexPartnerPromotionKey,
   } = useApiKeyLink({
     appId: "codex",
-    category,
+    category: effectiveCategory,
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
@@ -884,7 +968,7 @@ export function ProviderForm({
     partnerPromotionKey: geminiPartnerPromotionKey,
   } = useApiKeyLink({
     appId: "gemini",
-    category,
+    category: effectiveCategory,
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
@@ -938,7 +1022,7 @@ export function ProviderForm({
         resetCodexConfig(template.auth, template.config);
       }
       if (appId === "gemini") {
-        resetGeminiConfig({}, {});
+        resetGeminiConfig({}, {}, { enabled: false });
       }
       if (appId === "opencode") {
         opencodeForm.resetOpencodeState();
@@ -984,8 +1068,9 @@ export function ProviderForm({
       const preset = entry.preset as GeminiProviderPreset;
       const env = (preset.settingsConfig as any)?.env ?? {};
       const config = (preset.settingsConfig as any)?.config ?? {};
+      const authFiles = (preset.settingsConfig as any)?.authFiles;
 
-      resetGeminiConfig(env, config);
+      resetGeminiConfig(env, config, authFiles);
 
       form.reset({
         name: preset.name,
@@ -1107,7 +1192,7 @@ export function ProviderForm({
             onPresetChange={handlePresetChange}
             onUniversalPresetSelect={onUniversalPresetSelect}
             onManageUniversalProviders={onManageUniversalProviders}
-            category={category}
+            category={effectiveCategory}
           />
         )}
 
@@ -1236,6 +1321,26 @@ export function ProviderForm({
           }
         />
 
+        {shouldShowOfficialApiSwitch && (
+          <div className="rounded-lg border border-border-default bg-muted/30 p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-1">
+                <Label htmlFor={`${appId}-official-api-switch`}>
+                  {t("providerForm.officialApiSwitchLabel")}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t("providerForm.officialApiSwitchHint")}
+                </p>
+              </div>
+              <Switch
+                id={`${appId}-official-api-switch`}
+                checked={officialApiEnabled}
+                onCheckedChange={setOfficialApiEnabled}
+              />
+            </div>
+          </div>
+        )}
+
         {appId === "claude" && (
           <ClaudeFormFields
             providerId={providerId}
@@ -1248,7 +1353,7 @@ export function ProviderForm({
             }
             apiKey={apiKey}
             onApiKeyChange={handleApiKeyChange}
-            category={category}
+            category={effectiveCategory}
             shouldShowApiKeyLink={shouldShowClaudeApiKeyLink}
             websiteUrl={claudeWebsiteUrl}
             isPartner={isClaudePartner}
@@ -1267,7 +1372,7 @@ export function ProviderForm({
             }
             autoSelect={endpointAutoSelect}
             onAutoSelectChange={setEndpointAutoSelect}
-            shouldShowModelSelector={category !== "official"}
+            shouldShowModelSelector={effectiveCategory !== "official"}
             claudeModel={claudeModel}
             reasoningModel={reasoningModel}
             defaultHaikuModel={defaultHaikuModel}
@@ -1287,7 +1392,7 @@ export function ProviderForm({
             providerId={providerId}
             codexApiKey={codexApiKey}
             onApiKeyChange={handleCodexApiKeyChange}
-            category={category}
+            category={effectiveCategory}
             shouldShowApiKeyLink={shouldShowCodexApiKeyLink}
             websiteUrl={codexWebsiteUrl}
             isPartner={isCodexPartner}
@@ -1302,7 +1407,7 @@ export function ProviderForm({
             }
             autoSelect={endpointAutoSelect}
             onAutoSelectChange={setEndpointAutoSelect}
-            shouldShowModelField={category !== "official"}
+            shouldShowModelField={effectiveCategory !== "official"}
             modelName={codexModelName}
             onModelNameChange={handleCodexModelNameChange}
             speedTestEndpoints={speedTestEndpoints}
@@ -1318,7 +1423,7 @@ export function ProviderForm({
             )}
             apiKey={geminiApiKey}
             onApiKeyChange={handleGeminiApiKeyChange}
-            category={category}
+            category={effectiveCategory}
             shouldShowApiKeyLink={shouldShowGeminiApiKeyLink}
             websiteUrl={geminiWebsiteUrl}
             isPartner={isGeminiPartner}
@@ -1415,10 +1520,18 @@ export function ProviderForm({
             <GeminiConfigEditor
               envValue={geminiEnv}
               configValue={geminiConfig}
+              manageAuthFiles={manageAuthFiles}
+              googleAccountsValue={googleAccountsJson}
+              oauthCredsValue={oauthCredsJson}
               onEnvChange={handleGeminiEnvChange}
               onConfigChange={handleGeminiConfigChange}
+              onManageAuthFilesChange={handleManageAuthFilesChange}
+              onGoogleAccountsChange={handleGoogleAccountsJsonChange}
+              onOauthCredsChange={handleOauthCredsJsonChange}
               envError={envError}
               configError={geminiConfigError}
+              googleAccountsError={googleAccountsError}
+              oauthCredsError={oauthCredsError}
             />
             {settingsConfigErrorField}
           </>

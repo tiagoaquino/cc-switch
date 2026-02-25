@@ -1,4 +1,4 @@
-use crate::config::{get_home_dir, write_text_file};
+use crate::config::{delete_file, get_home_dir, read_json_file, write_json_file, write_text_file};
 use crate::error::AppError;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -19,6 +19,20 @@ pub fn get_gemini_env_path() -> PathBuf {
     get_gemini_dir().join(".env")
 }
 
+fn normalize_env_line(raw_line: &str) -> &str {
+    let line = raw_line.trim_start_matches('\u{feff}').trim();
+
+    // Accept shell-style .env lines like: `export KEY=value`
+    if let Some(stripped) = line
+        .strip_prefix("export ")
+        .or_else(|| line.strip_prefix("EXPORT "))
+    {
+        return stripped.trim_start();
+    }
+
+    line
+}
+
 /// 解析 .env 文件内容为键值对
 ///
 /// 此函数宽松地解析 .env 文件，跳过无效行。
@@ -26,8 +40,8 @@ pub fn get_gemini_env_path() -> PathBuf {
 pub fn parse_env_file(content: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
 
-    for line in content.lines() {
-        let line = line.trim();
+    for raw_line in content.lines() {
+        let line = normalize_env_line(raw_line);
 
         // 跳过空行和注释
         if line.is_empty() || line.starts_with('#') {
@@ -74,8 +88,8 @@ pub fn parse_env_file(content: &str) -> HashMap<String, String> {
 pub fn parse_env_file_strict(content: &str) -> Result<HashMap<String, String>, AppError> {
     let mut map = HashMap::new();
 
-    for (line_num, line) in content.lines().enumerate() {
-        let line = line.trim();
+    for (line_num, raw_line) in content.lines().enumerate() {
+        let line = normalize_env_line(raw_line);
         let line_number = line_num + 1; // 行号从 1 开始
 
         // 跳过空行和注释
@@ -282,6 +296,56 @@ pub fn get_gemini_settings_path() -> PathBuf {
     get_gemini_dir().join("settings.json")
 }
 
+/// 获取 Gemini OAuth google_accounts.json 文件路径
+pub fn get_gemini_google_accounts_path() -> PathBuf {
+    get_gemini_dir().join("google_accounts.json")
+}
+
+/// 获取 Gemini OAuth oauth_creds.json 文件路径
+pub fn get_gemini_oauth_creds_path() -> PathBuf {
+    get_gemini_dir().join("oauth_creds.json")
+}
+
+/// 读取可选 JSON 文件
+///
+/// - 文件不存在：返回 Ok(None)
+/// - 文件存在且为合法 JSON：返回 Ok(Some(value))
+/// - 文件存在但内容非法：返回 Err(AppError)
+pub fn read_optional_json_file(path: &std::path::Path) -> Result<Option<Value>, AppError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let value: Value = read_json_file(path)?;
+    if !value.is_object() {
+        return Err(AppError::localized(
+            "gemini.auth_files.invalid_json_type",
+            format!(
+                "Gemini 认证文件格式错误: {} 必须是 JSON 对象",
+                path.display()
+            ),
+            format!(
+                "Gemini auth file format invalid: {} must be a JSON object",
+                path.display()
+            ),
+        ));
+    }
+    Ok(Some(value))
+}
+
+/// 写入或删除可选 JSON 文件
+///
+/// - Some(value): 原子写入 JSON
+/// - None: 删除文件（若存在）
+pub fn write_or_delete_optional_json(
+    path: &std::path::Path,
+    value: Option<&Value>,
+) -> Result<(), AppError> {
+    match value {
+        Some(v) => write_json_file(path, v),
+        None => delete_file(path),
+    }
+}
+
 /// 更新 Gemini 目录 settings.json 中的 security.auth.selectedType 字段
 ///
 /// 此函数会：
@@ -400,6 +464,24 @@ GEMINI_MODEL=gemini-3-pro-preview
     }
 
     #[test]
+    fn test_parse_env_file_with_export_prefix_and_bom() {
+        let content = "\u{feff}export GEMINI_API_KEY=sk-test123\nexport GOOGLE_GEMINI_BASE_URL=https://example.com\nGEMINI_MODEL=gemini-3-pro-preview\n";
+
+        let map = parse_env_file(content);
+
+        assert_eq!(map.len(), 3);
+        assert_eq!(map.get("GEMINI_API_KEY"), Some(&"sk-test123".to_string()));
+        assert_eq!(
+            map.get("GOOGLE_GEMINI_BASE_URL"),
+            Some(&"https://example.com".to_string())
+        );
+        assert_eq!(
+            map.get("GEMINI_MODEL"),
+            Some(&"gemini-3-pro-preview".to_string())
+        );
+    }
+
+    #[test]
     fn test_serialize_env_file() {
         let mut map = HashMap::new();
         map.insert("GEMINI_API_KEY".to_string(), "sk-test".to_string());
@@ -453,6 +535,22 @@ GEMINI_MODEL=gemini-3-pro-preview
         assert_eq!(
             map.get("GEMINI_MODEL"),
             Some(&"gemini-3-pro-preview".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_env_file_strict_accepts_export_prefix() {
+        let content =
+            "export GEMINI_API_KEY=sk-test123\nexport GOOGLE_GEMINI_BASE_URL=https://example.com\n";
+
+        let result = parse_env_file_strict(content);
+        assert!(result.is_ok());
+
+        let map = result.unwrap();
+        assert_eq!(map.get("GEMINI_API_KEY"), Some(&"sk-test123".to_string()));
+        assert_eq!(
+            map.get("GOOGLE_GEMINI_BASE_URL"),
+            Some(&"https://example.com".to_string())
         );
     }
 

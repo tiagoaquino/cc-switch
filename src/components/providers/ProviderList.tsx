@@ -15,8 +15,7 @@ import {
 import { AnimatePresence, motion } from "framer-motion";
 import { Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { useQuery } from "@tanstack/react-query";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
@@ -59,6 +58,8 @@ interface ProviderListProps {
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
   onCreate?: () => void;
+  onImport?: () => void;
+  onLogoutContext?: () => void;
   isLoading?: boolean;
   isProxyRunning?: boolean; // 代理服务运行状态
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
@@ -81,6 +82,8 @@ export function ProviderList({
   onOpenWebsite,
   onOpenTerminal,
   onCreate,
+  onImport,
+  onLogoutContext,
   isLoading = false,
   isProxyRunning = false,
   isProxyTakeover = false,
@@ -180,23 +183,6 @@ export function ProviderList({
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Import current live config as default provider
-  const queryClient = useQueryClient();
-  const importMutation = useMutation({
-    mutationFn: () => providersApi.importDefault(appId),
-    onSuccess: (imported) => {
-      if (imported) {
-        queryClient.invalidateQueries({ queryKey: ["providers", appId] });
-        toast.success(t("provider.importCurrentDescription"));
-      } else {
-        toast.info(t("provider.noProviders"));
-      }
-    },
-    onError: (error: Error) => {
-      toast.error(error.message);
-    },
-  });
-
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
@@ -249,17 +235,8 @@ export function ProviderList({
     );
   }
 
-  // Only show import button for standard apps (not additive-mode apps like OpenCode/OpenClaw)
-  const showImportButton =
-    appId === "claude" || appId === "codex" || appId === "gemini";
-
   if (sortedProviders.length === 0) {
-    return (
-      <ProviderEmptyState
-        onCreate={onCreate}
-        onImport={showImportButton ? () => importMutation.mutate() : undefined}
-      />
-    );
+    return <ProviderEmptyState onCreate={onCreate} onImport={onImport} />;
   }
 
   const renderProviderList = () => (
@@ -327,6 +304,7 @@ export function ProviderList({
                 onSetAsDefault={
                   onSetAsDefault ? () => onSetAsDefault(provider) : undefined
                 }
+                onLogoutContext={onLogoutContext}
               />
             );
           })}
@@ -434,6 +412,7 @@ interface SortableProviderCardProps {
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
+  onLogoutContext?: () => void;
   isTesting: boolean;
   isProxyRunning: boolean;
   isProxyTakeover: boolean;
@@ -467,6 +446,7 @@ function SortableProviderCard({
   onOpenWebsite,
   onOpenTerminal,
   onTest,
+  onLogoutContext,
   isTesting,
   isProxyRunning,
   isProxyTakeover,
@@ -532,6 +512,7 @@ function SortableProviderCard({
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}
         onSetAsDefault={onSetAsDefault}
+        onLogoutContext={onLogoutContext}
       />
     </div>
   );

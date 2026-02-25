@@ -6,20 +6,31 @@ interface UseGeminiConfigStateProps {
   };
 }
 
+interface GeminiAuthFilesState {
+  enabled?: boolean;
+  googleAccounts?: Record<string, unknown> | null;
+  oauthCreds?: Record<string, unknown> | null;
+}
+
 /**
  * 管理 Gemini 配置状态
- * Gemini 配置包含两部分：env (环境变量) 和 config (扩展配置 JSON)
+ * Gemini 配置包含三部分：env / config / authFiles (OAuth 文件)
  */
 export function useGeminiConfigState({
   initialData,
 }: UseGeminiConfigStateProps) {
   const [geminiEnv, setGeminiEnvState] = useState("");
   const [geminiConfig, setGeminiConfigState] = useState("");
+  const [manageAuthFiles, setManageAuthFiles] = useState(false);
+  const [googleAccountsJson, setGoogleAccountsJsonState] = useState("");
+  const [oauthCredsJson, setOauthCredsJsonState] = useState("");
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [geminiBaseUrl, setGeminiBaseUrl] = useState("");
   const [geminiModel, setGeminiModel] = useState("");
   const [envError, setEnvError] = useState("");
   const [configError, setConfigError] = useState("");
+  const [googleAccountsError, setGoogleAccountsError] = useState("");
+  const [oauthCredsError, setOauthCredsError] = useState("");
 
   // 将 JSON env 对象转换为 .env 格式字符串
   // 保留所有环境变量，已知 key 优先显示
@@ -73,6 +84,20 @@ export function useGeminiConfigState({
     [],
   );
 
+  // 验证 JSON 字符串必须是对象
+  const validateJsonObjectOrEmpty = useCallback((value: string): string => {
+    if (!value.trim()) return "";
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return "";
+      }
+      return "Must be a JSON object";
+    } catch {
+      return "Invalid JSON format";
+    }
+  }, []);
+
   // 初始化 Gemini 配置（编辑模式）
   useEffect(() => {
     if (!initialData) return;
@@ -87,15 +112,40 @@ export function useGeminiConfigState({
       const configObj = (config as any).config || {};
       setGeminiConfigState(JSON.stringify(configObj, null, 2));
 
+      // 设置 authFiles
+      const authFiles =
+        typeof (config as any).authFiles === "object" &&
+        (config as any).authFiles !== null
+          ? ((config as any).authFiles as GeminiAuthFilesState)
+          : undefined;
+
+      setManageAuthFiles(authFiles?.enabled === true);
+      setGoogleAccountsJsonState(
+        authFiles?.googleAccounts
+          ? JSON.stringify(authFiles.googleAccounts, null, 2)
+          : "",
+      );
+      setOauthCredsJsonState(
+        authFiles?.oauthCreds ? JSON.stringify(authFiles.oauthCreds, null, 2) : "",
+      );
+      setGoogleAccountsError("");
+      setOauthCredsError("");
+
       // 提取 API Key、Base URL 和 Model
       if (typeof env.GEMINI_API_KEY === "string") {
         setGeminiApiKey(env.GEMINI_API_KEY);
+      } else {
+        setGeminiApiKey("");
       }
       if (typeof env.GOOGLE_GEMINI_BASE_URL === "string") {
         setGeminiBaseUrl(env.GOOGLE_GEMINI_BASE_URL);
+      } else {
+        setGeminiBaseUrl("");
       }
       if (typeof env.GEMINI_MODEL === "string") {
         setGeminiModel(env.GEMINI_MODEL);
+      } else {
+        setGeminiModel("");
       }
     }
   }, [initialData, envObjToString]);
@@ -208,14 +258,49 @@ export function useGeminiConfigState({
     [setGeminiConfig],
   );
 
+  const handleManageAuthFilesChange = useCallback((enabled: boolean) => {
+    setManageAuthFiles(enabled);
+  }, []);
+
+  const handleGoogleAccountsJsonChange = useCallback(
+    (value: string) => {
+      setGoogleAccountsJsonState(value);
+      setGoogleAccountsError(validateJsonObjectOrEmpty(value));
+    },
+    [validateJsonObjectOrEmpty],
+  );
+
+  const handleOauthCredsJsonChange = useCallback(
+    (value: string) => {
+      setOauthCredsJsonState(value);
+      setOauthCredsError(validateJsonObjectOrEmpty(value));
+    },
+    [validateJsonObjectOrEmpty],
+  );
+
   // 重置配置（用于预设切换）
   const resetGeminiConfig = useCallback(
-    (env: Record<string, unknown>, config: Record<string, unknown>) => {
+    (
+      env: Record<string, unknown>,
+      config: Record<string, unknown>,
+      authFiles?: GeminiAuthFilesState,
+    ) => {
       const envString = envObjToString(env);
       const configString = JSON.stringify(config, null, 2);
 
       setGeminiEnv(envString);
       setGeminiConfig(configString);
+      setManageAuthFiles(authFiles?.enabled === true);
+      setGoogleAccountsJsonState(
+        authFiles?.googleAccounts
+          ? JSON.stringify(authFiles.googleAccounts, null, 2)
+          : "",
+      );
+      setOauthCredsJsonState(
+        authFiles?.oauthCreds ? JSON.stringify(authFiles.oauthCreds, null, 2) : "",
+      );
+      setGoogleAccountsError("");
+      setOauthCredsError("");
 
       // 提取 API Key、Base URL 和 Model
       if (typeof env.GEMINI_API_KEY === "string") {
@@ -242,11 +327,16 @@ export function useGeminiConfigState({
   return {
     geminiEnv,
     geminiConfig,
+    manageAuthFiles,
+    googleAccountsJson,
+    oauthCredsJson,
     geminiApiKey,
     geminiBaseUrl,
     geminiModel,
     envError,
     configError,
+    googleAccountsError,
+    oauthCredsError,
     setGeminiEnv,
     setGeminiConfig,
     handleGeminiApiKeyChange,
@@ -254,6 +344,9 @@ export function useGeminiConfigState({
     handleGeminiModelChange,
     handleGeminiEnvChange,
     handleGeminiConfigChange,
+    handleManageAuthFilesChange,
+    handleGoogleAccountsJsonChange,
+    handleOauthCredsJsonChange,
     resetGeminiConfig,
     envStringToObj,
     envObjToString,

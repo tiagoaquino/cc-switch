@@ -30,6 +30,18 @@ export interface Provider {
   inFailoverQueue?: boolean;
 }
 
+export interface GeminiAuthFilesConfig {
+  enabled?: boolean;
+  googleAccounts?: Record<string, unknown> | null;
+  oauthCreds?: Record<string, unknown> | null;
+}
+
+export interface GeminiSettingsConfig {
+  env?: Record<string, string>;
+  config?: Record<string, unknown> | null;
+  authFiles?: GeminiAuthFilesConfig;
+}
+
 export interface AppConfig {
   providers: Record<string, Provider>;
   current: string;

@@ -72,7 +72,9 @@
     "noProviders": "No providers added yet",
     "noProvidersDescription": "Import your current live config below, or manually add a new provider",
     "importCurrent": "Import Current Config",
-    "importCurrentDescription": "Import current live config as default provider",
+    "importCurrentDescription": "Import current live config as a provider profile",
+    "logoutContext": "Logout App",
+    "logoutContextTooltip": "Logout {{appName}} context",
     "currentlyUsing": "Currently Using",
     "enable": "Enable",
     "inUse": "In Use",
@@ -163,6 +165,8 @@
     "openclawDefaultModelSet": "Set as default model",
     "openclawDefaultModelSetFailed": "Failed to set default model",
     "openclawNoModels": "No models configured",
+    "logoutContextSuccess": "{{appName}} context logged out",
+    "logoutContextFailed": "Failed to logout {{appName}} context: {{error}}",
     "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider"
   },
   "confirm": {
@@ -170,6 +174,8 @@
     "deleteProviderMessage": "Are you sure you want to delete provider \"{{name}}\"? This action cannot be undone.",
     "removeProvider": "Remove Provider",
     "removeProviderMessage": "Are you sure you want to remove provider \"{{name}}\" from the configuration?\n\nAfter removal, this provider will no longer be active, but the configuration data will be retained in CC Switch. You can re-add it at any time.",
+    "logoutContext": "Logout {{appName}} Context",
+    "logoutContextMessage": "This will remove live config/auth files for {{appName}} and clear the current provider in CC Switch.\n\nSaved provider profiles will be kept.",
     "proxy": {
       "title": "Enable Local Proxy",
       "message": "Local proxy is an advanced feature. Please make sure you understand how it works before enabling.\n\nWe recommend consulting the relevant documentation or your provider for proper configuration.",
@@ -616,6 +622,8 @@
     "customApiKeyHint": "💡 Custom configuration requires manually filling all necessary fields",
     "omoHint": "💡 OMO config manages Agent model assignments and writes to oh-my-opencode.jsonc",
     "officialHint": "💡 Official provider uses browser login, no API Key needed",
+    "officialApiSwitchLabel": "Use Official API Mode",
+    "officialApiSwitchHint": "When enabled, manual endpoint fields are hidden and official login behavior is applied.",
     "getApiKey": "Get API Key",
     "partnerPromotion": {
       "packycode": "PackyCode is an official partner of CC Switch. Register using this link and enter \"cc-switch\" promo code during recharge to get 10% off",
@@ -741,7 +749,14 @@
     "invalidJsonFormat": "Common config snippet format error (must be valid JSON)",
     "noCommonConfigToApply": "Common config snippet is empty or has no applicable entries",
     "configMergeFailed": "Config merge failed: {{error}}",
-    "configReplaceFailed": "Config replace failed: {{error}}"
+    "configReplaceFailed": "Config replace failed: {{error}}",
+    "authFiles": {
+      "title": "OAuth Auth Files",
+      "hint": "When enabled, switching to this profile will apply google_accounts.json and oauth_creds.json.",
+      "googleAccounts": "google_accounts.json",
+      "oauthCreds": "oauth_creds.json",
+      "invalidJson": "OAuth auth files JSON format error, please check syntax"
+    }
   },
   "opencode": {
     "npmPackage": "API Format",
@@ -1957,3 +1972,4 @@
     "suggestedDefaultsHint": "Use this preset's recommended default model configuration"
   }
 }
+

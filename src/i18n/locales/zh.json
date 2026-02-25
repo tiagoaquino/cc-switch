@@ -72,7 +72,9 @@
     "noProviders": "还没有添加任何供应商",
     "noProvidersDescription": "点击下方的\"导入当前配置\"按钮导入已有配置，或手动添加新的供应商",
     "importCurrent": "导入当前配置",
-    "importCurrentDescription": "将当前正在使用的配置导入为默认供应商",
+    "importCurrentDescription": "将当前正在使用的配置导入为供应商配置档案",
+    "logoutContext": "退出应用上下文",
+    "logoutContextTooltip": "退出 {{appName}} 上下文",
     "currentlyUsing": "当前使用",
     "enable": "启用",
     "inUse": "使用中",
@@ -163,6 +165,8 @@
     "openclawDefaultModelSet": "已设为默认模型",
     "openclawDefaultModelSetFailed": "设置默认模型失败",
     "openclawNoModels": "该供应商没有配置模型",
+    "logoutContextSuccess": "已退出 {{appName}} 上下文",
+    "logoutContextFailed": "退出 {{appName}} 上下文失败：{{error}}",
     "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存"
   },
   "confirm": {
@@ -170,6 +174,8 @@
     "deleteProviderMessage": "确定要删除供应商 \"{{name}}\" 吗？此操作无法撤销。",
     "removeProvider": "移除供应商",
     "removeProviderMessage": "确定要从配置中移除供应商 \"{{name}}\" 吗？\n\n移除后该供应商将不再生效，但配置数据会保留在 CC Switch 中，您可以随时重新添加。",
+    "logoutContext": "退出 {{appName}} 上下文",
+    "logoutContextMessage": "此操作将删除 {{appName}} 的 live 配置/认证文件，并清空 CC Switch 中该应用的当前供应商。\n\n已保存的供应商档案会保留。",
     "proxy": {
       "title": "启用本地代理服务",
       "message": "本地代理是一项高级功能，启用前请确保您已了解其工作原理。\n\n建议先查阅相关文档或咨询您的供应商，以获取正确的配置方式。",
@@ -616,6 +622,8 @@
     "customApiKeyHint": "💡 自定义配置需手动填写所有必要字段",
     "omoHint": "💡 OMO 配置管理 Agent 模型分配，写入 oh-my-opencode.jsonc",
     "officialHint": "💡 官方供应商使用浏览器登录，无需配置 API Key",
+    "officialApiSwitchLabel": "使用官方 API 模式",
+    "officialApiSwitchHint": "开启后将隐藏手动 API 端点字段，并按官方登录模式处理。",
     "getApiKey": "获取 API Key",
     "partnerPromotion": {
       "packycode": "PackyCode 是 CC Switch 的官方合作伙伴，使用此链接注册并在充值时填写 \"cc-switch\" 优惠码，可以享受9折优惠",
@@ -741,7 +749,14 @@
     "invalidJsonFormat": "通用配置片段格式错误（必须是有效的 JSON）",
     "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容",
     "configMergeFailed": "配置合并失败: {{error}}",
-    "configReplaceFailed": "配置替换失败: {{error}}"
+    "configReplaceFailed": "配置替换失败: {{error}}",
+    "authFiles": {
+      "title": "OAuth 认证文件",
+      "hint": "启用后，切换到该配置时会应用 google_accounts.json 和 oauth_creds.json。",
+      "googleAccounts": "google_accounts.json",
+      "oauthCreds": "oauth_creds.json",
+      "invalidJson": "OAuth 认证文件 JSON 格式错误，请检查语法"
+    }
   },
   "opencode": {
     "npmPackage": "接口格式",
@@ -1957,3 +1972,4 @@
     "suggestedDefaultsHint": "使用此预设推荐的默认模型配置"
   }
 }
+

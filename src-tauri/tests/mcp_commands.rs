@@ -1,11 +1,12 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
 
 use serde_json::json;
 
 use cc_switch_lib::{
     get_claude_mcp_path, get_claude_settings_path, import_default_config_test_hook, AppError,
-    AppType, McpApps, McpServer, McpService, MultiAppConfig,
+    AppType, McpApps, McpServer, McpService, MultiAppConfig, Provider, ProviderService,
 };
 
 #[path = "support.rs"]
@@ -66,6 +67,197 @@ fn import_default_config_claude_persists_provider() {
 }
 
 #[test]
+fn import_default_config_with_existing_provider_creates_new_profile_and_switches_effective_current()
+{
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let settings_path = get_claude_settings_path();
+    if let Some(parent) = settings_path.parent() {
+        fs::create_dir_all(parent).expect("create claude settings dir");
+    }
+    let live_settings = json!({
+        "env": {
+            "ANTHROPIC_AUTH_TOKEN": "imported-key",
+            "ANTHROPIC_BASE_URL": "https://imported.example"
+        }
+    });
+    fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&live_settings).expect("serialize live settings"),
+    )
+    .expect("seed claude settings.json");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Claude);
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    let existing = Provider::with_id(
+        "existing".to_string(),
+        "Existing Provider".to_string(),
+        json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "existing-key",
+                "ANTHROPIC_BASE_URL": "https://existing.example"
+            }
+        }),
+        None,
+    );
+    state
+        .db
+        .save_provider(AppType::Claude.as_str(), &existing)
+        .expect("save existing provider");
+    state
+        .db
+        .set_current_provider(AppType::Claude.as_str(), "existing")
+        .expect("set existing as db current");
+
+    import_default_config_test_hook(&state, AppType::Claude)
+        .expect("import default config succeeds with existing provider");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Claude.as_str())
+        .expect("get all providers");
+    assert_eq!(
+        providers.len(),
+        2,
+        "should keep existing and add one imported"
+    );
+    assert!(
+        providers.contains_key("existing"),
+        "existing provider should be preserved"
+    );
+
+    let imported_entry = providers
+        .iter()
+        .find(|(id, _)| id.as_str() != "existing")
+        .expect("imported provider should exist");
+    let imported_id = imported_entry.0.clone();
+    let imported_provider = imported_entry.1;
+
+    assert!(
+        imported_id.starts_with("imported-"),
+        "imported provider id should use imported-* format, got: {imported_id}"
+    );
+    assert!(
+        imported_provider.name.starts_with("Imported Config ("),
+        "imported provider name should use Imported Config timestamp format, got: {}",
+        imported_provider.name
+    );
+    assert_eq!(
+        imported_provider.settings_config, live_settings,
+        "imported provider should snapshot live settings"
+    );
+    assert!(
+        imported_provider.created_at.is_some(),
+        "imported provider should have created_at populated"
+    );
+
+    let db_current = state
+        .db
+        .get_current_provider(AppType::Claude.as_str())
+        .expect("get db current");
+    assert_eq!(
+        db_current.as_deref(),
+        Some(imported_id.as_str()),
+        "db current should switch to imported provider"
+    );
+
+    // Mutate DB current away from imported provider; effective current should
+    // still resolve to imported provider via local settings current_provider_*.
+    state
+        .db
+        .set_current_provider(AppType::Claude.as_str(), "existing")
+        .expect("set db current back to existing");
+    let effective_current =
+        ProviderService::current(&state, AppType::Claude).expect("get effective current");
+    assert_eq!(
+        effective_current, imported_id,
+        "effective current should follow local settings updated by import"
+    );
+
+    let db_path = home.join(".cc-switch").join("cc-switch.db");
+    assert!(
+        db_path.exists(),
+        "importing config should persist to cc-switch.db"
+    );
+}
+
+#[test]
+fn import_default_config_repeated_calls_generate_unique_imported_ids() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let settings_path = get_claude_settings_path();
+    if let Some(parent) = settings_path.parent() {
+        fs::create_dir_all(parent).expect("create claude settings dir");
+    }
+    fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "repeat-key",
+                "ANTHROPIC_BASE_URL": "https://repeat.example"
+            }
+        }))
+        .expect("serialize settings"),
+    )
+    .expect("seed claude settings.json");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Claude);
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    import_default_config_test_hook(&state, AppType::Claude).expect("first import should succeed");
+    import_default_config_test_hook(&state, AppType::Claude).expect("second import should succeed");
+    import_default_config_test_hook(&state, AppType::Claude).expect("third import should succeed");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Claude.as_str())
+        .expect("get all providers");
+    assert_eq!(
+        providers.len(),
+        3,
+        "three imports should create three providers"
+    );
+    assert!(
+        providers.contains_key("default"),
+        "first import should stay default"
+    );
+
+    let ids: Vec<String> = providers.keys().cloned().collect();
+    let unique_ids: HashSet<String> = ids.iter().cloned().collect();
+    assert_eq!(
+        ids.len(),
+        unique_ids.len(),
+        "all imported provider ids should be unique"
+    );
+
+    let imported_ids: Vec<&String> = providers
+        .keys()
+        .filter(|id| id.as_str() != "default")
+        .collect();
+    assert_eq!(
+        imported_ids.len(),
+        2,
+        "imports after the first should generate imported-* providers"
+    );
+    assert!(
+        imported_ids
+            .iter()
+            .all(|id| id.as_str().starts_with("imported-")),
+        "non-default imported ids should start with imported-*"
+    );
+
+    let db_path = home.join(".cc-switch").join("cc-switch.db");
+    assert!(db_path.exists(), "imports should persist to cc-switch.db");
+}
+
+#[test]
 fn import_default_config_without_live_file_returns_error() {
     use support::create_test_state;
 
@@ -98,6 +290,225 @@ fn import_default_config_without_live_file_returns_error() {
     assert!(
         providers.is_empty(),
         "failed import should not create any providers in database"
+    );
+}
+
+#[test]
+fn import_default_config_gemini_without_env_file_still_imports() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let gemini_dir = home.join(".gemini");
+    fs::create_dir_all(&gemini_dir).expect("create gemini dir");
+    let settings_path = gemini_dir.join("settings.json");
+    let settings = json!({
+        "security": {
+            "auth": {
+                "selectedType": "oauth-personal"
+            }
+        }
+    });
+    fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&settings).expect("serialize gemini settings"),
+    )
+    .expect("seed gemini settings.json");
+    let _ = fs::remove_file(gemini_dir.join("google_accounts.json"));
+    let _ = fs::remove_file(gemini_dir.join("oauth_creds.json"));
+
+    // Intentionally do NOT create ~/.gemini/.env to simulate OAuth-only setup.
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Gemini);
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    import_default_config_test_hook(&state, AppType::Gemini)
+        .expect("import default gemini config succeeds without .env");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Gemini.as_str())
+        .expect("get all gemini providers");
+    let default_provider = providers.get("default").expect("default provider");
+
+    assert!(
+        default_provider
+            .settings_config
+            .get("env")
+            .and_then(|v| v.as_object())
+            .is_some(),
+        "imported gemini provider should include env object even when .env is missing"
+    );
+    assert_eq!(
+        default_provider
+            .settings_config
+            .pointer("/config/security/auth/selectedType")
+            .and_then(|v| v.as_str()),
+        Some("oauth-personal"),
+        "import should preserve settings.json config"
+    );
+    assert_eq!(
+        default_provider.category.as_deref(),
+        Some("official"),
+        "oauth profile should be classified as official"
+    );
+}
+
+#[test]
+fn import_default_config_gemini_reads_env_with_export_prefix() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let gemini_dir = home.join(".gemini");
+    fs::create_dir_all(&gemini_dir).expect("create gemini dir");
+    fs::write(
+        gemini_dir.join(".env"),
+        "export GEMINI_API_KEY=sk-exported\nexport GOOGLE_GEMINI_BASE_URL=https://export.example\nGEMINI_MODEL=gemini-3-pro\n",
+    )
+    .expect("seed gemini .env");
+    fs::write(
+        gemini_dir.join("settings.json"),
+        serde_json::to_string_pretty(&json!({})).expect("serialize settings"),
+    )
+    .expect("seed settings.json");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Gemini);
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    import_default_config_test_hook(&state, AppType::Gemini)
+        .expect("import default gemini config succeeds");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Gemini.as_str())
+        .expect("get all gemini providers");
+    let default_provider = providers.get("default").expect("default provider");
+
+    assert_eq!(
+        default_provider
+            .settings_config
+            .pointer("/env/GEMINI_API_KEY")
+            .and_then(|v| v.as_str()),
+        Some("sk-exported")
+    );
+    assert_eq!(
+        default_provider
+            .settings_config
+            .pointer("/env/GOOGLE_GEMINI_BASE_URL")
+            .and_then(|v| v.as_str()),
+        Some("https://export.example")
+    );
+    assert_eq!(
+        default_provider
+            .settings_config
+            .pointer("/env/GEMINI_MODEL")
+            .and_then(|v| v.as_str()),
+        Some("gemini-3-pro")
+    );
+}
+
+#[test]
+fn import_default_config_gemini_imports_oauth_files_when_present() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let gemini_dir = home.join(".gemini");
+    fs::create_dir_all(&gemini_dir).expect("create gemini dir");
+    fs::write(
+        gemini_dir.join("settings.json"),
+        serde_json::to_string_pretty(&json!({})).expect("serialize settings"),
+    )
+    .expect("seed settings.json");
+    fs::write(
+        gemini_dir.join("google_accounts.json"),
+        serde_json::to_string_pretty(&json!({ "accounts": [{ "id": "a1" }] }))
+            .expect("serialize google_accounts"),
+    )
+    .expect("seed google_accounts.json");
+    fs::write(
+        gemini_dir.join("oauth_creds.json"),
+        serde_json::to_string_pretty(&json!({ "refresh_token": "rt1" }))
+            .expect("serialize oauth_creds"),
+    )
+    .expect("seed oauth_creds.json");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Gemini);
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    import_default_config_test_hook(&state, AppType::Gemini)
+        .expect("import default gemini config succeeds");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Gemini.as_str())
+        .expect("get gemini providers");
+    let provider = providers.get("default").expect("default provider");
+
+    assert_eq!(
+        provider
+            .settings_config
+            .pointer("/authFiles/enabled")
+            .and_then(|v| v.as_bool()),
+        Some(true),
+        "authFiles should be enabled when oauth files exist"
+    );
+    assert_eq!(
+        provider
+            .settings_config
+            .pointer("/authFiles/googleAccounts/accounts/0/id")
+            .and_then(|v| v.as_str()),
+        Some("a1")
+    );
+    assert_eq!(
+        provider
+            .settings_config
+            .pointer("/authFiles/oauthCreds/refresh_token")
+            .and_then(|v| v.as_str()),
+        Some("rt1")
+    );
+    assert_eq!(
+        provider.category.as_deref(),
+        Some("official"),
+        "oauth auth files profile should be classified as official"
+    );
+}
+
+#[test]
+fn import_default_config_gemini_skips_oauth_files_when_missing() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let gemini_dir = home.join(".gemini");
+    fs::create_dir_all(&gemini_dir).expect("create gemini dir");
+    fs::write(
+        gemini_dir.join("settings.json"),
+        serde_json::to_string_pretty(&json!({})).expect("serialize settings"),
+    )
+    .expect("seed settings.json");
+    let _ = fs::remove_file(gemini_dir.join("google_accounts.json"));
+    let _ = fs::remove_file(gemini_dir.join("oauth_creds.json"));
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Gemini);
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    import_default_config_test_hook(&state, AppType::Gemini)
+        .expect("import default gemini config succeeds");
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Gemini.as_str())
+        .expect("get gemini providers");
+    let provider = providers.get("default").expect("default provider");
+    assert!(
+        provider.settings_config.get("authFiles").is_none(),
+        "authFiles should be absent when oauth files are missing"
     );
 }
 

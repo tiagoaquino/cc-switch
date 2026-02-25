@@ -11,6 +11,45 @@ interface UseProviderCategoryProps {
   selectedPresetId: string | null;
   isEditMode: boolean;
   initialCategory?: ProviderCategory;
+  initialSettingsConfig?: Record<string, unknown>;
+}
+
+function isGeminiOauthOfficialSettings(
+  settingsConfig?: Record<string, unknown>,
+): boolean {
+  if (!settingsConfig || typeof settingsConfig !== "object") {
+    return false;
+  }
+
+  const configObj = settingsConfig.config as
+    | Record<string, unknown>
+    | undefined;
+  const security = configObj?.security as Record<string, unknown> | undefined;
+  const auth = security?.auth as Record<string, unknown> | undefined;
+  const selectedType = auth?.selectedType;
+
+  if (selectedType === "oauth-personal") {
+    return true;
+  }
+
+  const authFiles = settingsConfig.authFiles as
+    | Record<string, unknown>
+    | undefined;
+  const authFilesEnabled = authFiles?.enabled === true;
+  if (!authFilesEnabled) {
+    return false;
+  }
+
+  const env = settingsConfig.env as Record<string, unknown> | undefined;
+  const geminiApiKey = env?.GEMINI_API_KEY;
+  const googleApiKey = env?.GOOGLE_API_KEY;
+
+  const hasGeminiApiKey =
+    typeof geminiApiKey === "string" && geminiApiKey.trim() !== "";
+  const hasGoogleApiKey =
+    typeof googleApiKey === "string" && googleApiKey.trim() !== "";
+
+  return !hasGeminiApiKey && !hasGoogleApiKey;
 }
 
 /**
@@ -22,16 +61,28 @@ export function useProviderCategory({
   selectedPresetId,
   isEditMode,
   initialCategory,
+  initialSettingsConfig,
 }: UseProviderCategoryProps) {
+  const getEditModeCategory = () => {
+    if (
+      appId === "gemini" &&
+      isGeminiOauthOfficialSettings(initialSettingsConfig)
+    ) {
+      return "official" as ProviderCategory;
+    }
+
+    return initialCategory;
+  };
+
   const [category, setCategory] = useState<ProviderCategory | undefined>(
     // 编辑模式：使用 initialCategory
-    isEditMode ? initialCategory : undefined,
+    isEditMode ? getEditModeCategory() : undefined,
   );
 
   useEffect(() => {
     // 编辑模式：只在初始化时设置，后续不自动更新
     if (isEditMode) {
-      setCategory(initialCategory);
+      setCategory(getEditModeCategory());
       return;
     }
 
@@ -76,7 +127,13 @@ export function useProviderCategory({
         setCategory(preset.category || undefined);
       }
     }
-  }, [appId, selectedPresetId, isEditMode, initialCategory]);
+  }, [
+    appId,
+    selectedPresetId,
+    isEditMode,
+    initialCategory,
+    initialSettingsConfig,
+  ]);
 
   return { category, setCategory };
 }
