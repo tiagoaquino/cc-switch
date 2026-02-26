@@ -24,6 +24,7 @@ impl McpApps {
             AppType::Claude => self.claude,
             AppType::Codex => self.codex,
             AppType::Gemini => self.gemini,
+            AppType::Antigravity => false, // Antigravity doesn't support MCP
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
         }
@@ -35,6 +36,7 @@ impl McpApps {
             AppType::Claude => self.claude = enabled,
             AppType::Codex => self.codex = enabled,
             AppType::Gemini => self.gemini = enabled,
+            AppType::Antigravity => {} // Antigravity doesn't support MCP, ignore
             AppType::OpenCode => self.opencode = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
         }
@@ -84,6 +86,7 @@ impl SkillApps {
             AppType::Claude => self.claude,
             AppType::Codex => self.codex,
             AppType::Gemini => self.gemini,
+            AppType::Antigravity => false, // Antigravity doesn't support Skills
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => false, // OpenClaw doesn't support Skills
         }
@@ -95,6 +98,7 @@ impl SkillApps {
             AppType::Claude => self.claude = enabled,
             AppType::Codex => self.codex = enabled,
             AppType::Gemini => self.gemini = enabled,
+            AppType::Antigravity => {} // Antigravity doesn't support Skills, ignore
             AppType::OpenCode => self.opencode = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
         }
@@ -239,6 +243,9 @@ pub struct McpRoot {
     pub codex: McpConfig,
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub gemini: McpConfig,
+    /// Antigravity MCP 配置（预留，当前无 MCP 支持）
+    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
+    pub antigravity: McpConfig,
     /// OpenCode MCP 配置（v4.0.0+，实际使用 opencode.json）
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub opencode: McpConfig,
@@ -256,6 +263,7 @@ impl Default for McpRoot {
             claude: McpConfig::default(),
             codex: McpConfig::default(),
             gemini: McpConfig::default(),
+            antigravity: McpConfig::default(),
             opencode: McpConfig::default(),
             openclaw: McpConfig::default(),
         }
@@ -279,6 +287,8 @@ pub struct PromptRoot {
     #[serde(default)]
     pub gemini: PromptConfig,
     #[serde(default)]
+    pub antigravity: PromptConfig,
+    #[serde(default)]
     pub opencode: PromptConfig,
     #[serde(default)]
     pub openclaw: PromptConfig,
@@ -296,6 +306,7 @@ pub enum AppType {
     Claude,
     Codex,
     Gemini,
+    Antigravity,
     OpenCode,
     OpenClaw,
 }
@@ -306,6 +317,7 @@ impl AppType {
             AppType::Claude => "claude",
             AppType::Codex => "codex",
             AppType::Gemini => "gemini",
+            AppType::Antigravity => "antigravity",
             AppType::OpenCode => "opencode",
             AppType::OpenClaw => "openclaw",
         }
@@ -325,6 +337,7 @@ impl AppType {
             AppType::Claude,
             AppType::Codex,
             AppType::Gemini,
+            AppType::Antigravity,
             AppType::OpenCode,
             AppType::OpenClaw,
         ]
@@ -341,12 +354,13 @@ impl FromStr for AppType {
             "claude" => Ok(AppType::Claude),
             "codex" => Ok(AppType::Codex),
             "gemini" => Ok(AppType::Gemini),
+            "antigravity" => Ok(AppType::Antigravity),
             "opencode" => Ok(AppType::OpenCode),
             "openclaw" => Ok(AppType::OpenClaw),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, codex, gemini, opencode, openclaw。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, codex, gemini, opencode, openclaw."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, codex, gemini, antigravity, opencode, openclaw。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, codex, gemini, antigravity, opencode, openclaw."),
             )),
         }
     }
@@ -381,6 +395,7 @@ impl Default for MultiAppConfig {
         apps.insert("claude".to_string(), ProviderManager::default());
         apps.insert("codex".to_string(), ProviderManager::default());
         apps.insert("gemini".to_string(), ProviderManager::default());
+        apps.insert("antigravity".to_string(), ProviderManager::default());
         apps.insert("opencode".to_string(), ProviderManager::default());
         apps.insert("openclaw".to_string(), ProviderManager::default());
 
@@ -469,6 +484,14 @@ impl MultiAppConfig {
             updated = true;
         }
 
+        // Ensure antigravity app exists (compatible with older config files)
+        if !config.apps.contains_key("antigravity") {
+            config
+                .apps
+                .insert("antigravity".to_string(), ProviderManager::default());
+            updated = true;
+        }
+
         // 执行 MCP 迁移（v3.6.x → v3.7.0）
         let migrated = config.migrate_mcp_to_unified()?;
         if migrated {
@@ -530,6 +553,7 @@ impl MultiAppConfig {
             AppType::Claude => &self.mcp.claude,
             AppType::Codex => &self.mcp.codex,
             AppType::Gemini => &self.mcp.gemini,
+            AppType::Antigravity => &self.mcp.antigravity,
             AppType::OpenCode => &self.mcp.opencode,
             AppType::OpenClaw => &self.mcp.openclaw,
         }
@@ -541,6 +565,7 @@ impl MultiAppConfig {
             AppType::Claude => &mut self.mcp.claude,
             AppType::Codex => &mut self.mcp.codex,
             AppType::Gemini => &mut self.mcp.gemini,
+            AppType::Antigravity => &mut self.mcp.antigravity,
             AppType::OpenCode => &mut self.mcp.opencode,
             AppType::OpenClaw => &mut self.mcp.openclaw,
         }
@@ -556,6 +581,7 @@ impl MultiAppConfig {
         Self::auto_import_prompt_if_exists(&mut config, AppType::Claude)?;
         Self::auto_import_prompt_if_exists(&mut config, AppType::Codex)?;
         Self::auto_import_prompt_if_exists(&mut config, AppType::Gemini)?;
+        Self::auto_import_prompt_if_exists(&mut config, AppType::Antigravity)?;
         Self::auto_import_prompt_if_exists(&mut config, AppType::OpenCode)?;
         Self::auto_import_prompt_if_exists(&mut config, AppType::OpenClaw)?;
 
@@ -577,6 +603,7 @@ impl MultiAppConfig {
         if !self.prompts.claude.prompts.is_empty()
             || !self.prompts.codex.prompts.is_empty()
             || !self.prompts.gemini.prompts.is_empty()
+            || !self.prompts.antigravity.prompts.is_empty()
             || !self.prompts.opencode.prompts.is_empty()
             || !self.prompts.openclaw.prompts.is_empty()
         {
@@ -590,6 +617,7 @@ impl MultiAppConfig {
             AppType::Claude,
             AppType::Codex,
             AppType::Gemini,
+            AppType::Antigravity,
             AppType::OpenCode,
             AppType::OpenClaw,
         ] {
@@ -661,6 +689,7 @@ impl MultiAppConfig {
             AppType::Claude => &mut config.prompts.claude.prompts,
             AppType::Codex => &mut config.prompts.codex.prompts,
             AppType::Gemini => &mut config.prompts.gemini.prompts,
+            AppType::Antigravity => &mut config.prompts.antigravity.prompts,
             AppType::OpenCode => &mut config.prompts.opencode.prompts,
             AppType::OpenClaw => &mut config.prompts.openclaw.prompts,
         };
@@ -695,12 +724,14 @@ impl MultiAppConfig {
             AppType::Claude,
             AppType::Codex,
             AppType::Gemini,
+            AppType::Antigravity,
             AppType::OpenCode,
         ] {
             let old_servers = match app {
                 AppType::Claude => &self.mcp.claude.servers,
                 AppType::Codex => &self.mcp.codex.servers,
                 AppType::Gemini => &self.mcp.gemini.servers,
+                AppType::Antigravity => continue, // Antigravity does not support MCP
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
             };

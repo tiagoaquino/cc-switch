@@ -49,7 +49,7 @@ describe("useGeminiConfigState", () => {
                 GEMINI_API_KEY: "sk-test",
                 GOOGLE_GEMINI_BASE_URL: "https://example.com",
                 GEMINI_MODEL: "gemini-3-pro-preview",
-              },
+              } as Record<string, unknown>,
               config: {},
             },
           },
@@ -64,7 +64,7 @@ describe("useGeminiConfigState", () => {
     rerender({
       initialData: {
         settingsConfig: {
-          env: {},
+          env: {} as Record<string, unknown>,
           config: {},
         },
       },

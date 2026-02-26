@@ -179,6 +179,31 @@ impl StreamCheckService {
         provider: &Provider,
         config: &StreamCheckConfig,
     ) -> Result<StreamCheckResult, AppError> {
+        match app_type {
+            AppType::OpenCode => {
+                return Err(AppError::localized(
+                    "opencode_no_stream_check",
+                    "OpenCode 暂不支持健康检查",
+                    "OpenCode does not support health check yet",
+                ));
+            }
+            AppType::OpenClaw => {
+                return Err(AppError::localized(
+                    "openclaw_no_stream_check",
+                    "OpenClaw 暂不支持健康检查",
+                    "OpenClaw does not support health check yet",
+                ));
+            }
+            AppType::Antigravity => {
+                return Err(AppError::localized(
+                    "antigravity_no_stream_check",
+                    "Antigravity 暂不支持健康检查",
+                    "Antigravity does not support health check yet",
+                ));
+            }
+            AppType::Claude | AppType::Codex | AppType::Gemini => {}
+        }
+
         let start = Instant::now();
         let adapter = get_adapter(app_type);
 
@@ -246,6 +271,14 @@ impl StreamCheckService {
                     "openclaw_no_stream_check",
                     "OpenClaw 暂不支持健康检查",
                     "OpenClaw does not support health check yet",
+                ));
+            }
+            AppType::Antigravity => {
+                // Antigravity doesn't support stream check yet
+                return Err(AppError::localized(
+                    "antigravity_no_stream_check",
+                    "Antigravity 暂不支持健康检查",
+                    "Antigravity does not support health check yet",
                 ));
             }
         };
@@ -580,6 +613,7 @@ impl StreamCheckService {
                 // Try to extract first model from the models array
                 Self::extract_openclaw_model(provider).unwrap_or_else(|| "gpt-4o".to_string())
             }
+            AppType::Antigravity => "state.vscdb".to_string(),
         }
     }
 

@@ -1,5 +1,6 @@
 mod app_config;
 mod app_store;
+mod antigravity_config;
 mod auto_launch;
 mod claude_mcp;
 mod claude_plugin;

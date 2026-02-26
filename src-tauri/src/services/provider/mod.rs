@@ -628,37 +628,18 @@ impl ProviderService {
         if let Some(current_id) = current_id {
             if current_id != id {
                 // Additive mode apps - all providers coexist in the same file,
-                // no backfill needed (backfill is for exclusive mode apps like Claude/Codex/Gemini)
+                // no backfill needed (backfill is for exclusive mode apps like
+                // Claude/Codex/Gemini/Antigravity)
                 if !app_type.is_additive_mode() {
                     // Only backfill when switching to a different provider
-                    if let Ok(live_config) = read_live_settings(app_type.clone()) {
-                        if let Some(mut current_provider) = providers.get(&current_id).cloned() {
-                            // Gemini keeps additional profile-only fields (authFiles/config),
-                            // so backfill updates env from live while preserving existing fields.
-                            current_provider.settings_config =
-                                if matches!(app_type, AppType::Gemini) {
-                                    merge_gemini_backfill_with_existing(
-                                        &current_provider.settings_config,
-                                        &live_config,
-                                    )
-                                } else {
-                                    // Other switch-mode apps only persist provider key fields.
-                                    backfill_key_fields(&app_type, &live_config)
-                                };
-                            if matches!(app_type, AppType::Claude) {
-                                backfill_claude_meta_fields(&mut current_provider, &live_config);
-                            }
-                            Self::normalize_provider_if_claude(&app_type, &mut current_provider);
-                            if let Err(e) =
-                                state.db.save_provider(app_type.as_str(), &current_provider)
-                            {
-                                log::warn!("Backfill failed: {e}");
-                                result
-                                    .warnings
-                                    .push(format!("backfill_failed:{current_id}"));
-                            }
-                        }
-                    }
+                    Self::backfill_provider_by_id_best_effort(
+                        state,
+                        &app_type,
+                        &current_id,
+                        providers,
+                        Some(&mut result.warnings),
+                        "switch",
+                    );
                 }
             }
         }
@@ -678,8 +659,138 @@ impl ProviderService {
         Ok(result)
     }
 
+    fn read_live_backfill_snapshot(app_type: &AppType, provider_id: &str) -> Result<Value, AppError> {
+        match app_type {
+            AppType::OpenCode => {
+                let provider_map = crate::opencode_config::get_providers()?;
+                provider_map.get(provider_id).cloned().ok_or_else(|| {
+                    AppError::Message(format!(
+                        "OpenCode provider '{}' not found in live configuration",
+                        provider_id
+                    ))
+                })
+            }
+            AppType::OpenClaw => {
+                let provider_map = crate::openclaw_config::get_providers()?;
+                provider_map.get(provider_id).cloned().ok_or_else(|| {
+                    AppError::Message(format!(
+                        "OpenClaw provider '{}' not found in live configuration",
+                        provider_id
+                    ))
+                })
+            }
+            _ => read_live_settings(app_type.clone()),
+        }
+    }
+
+    fn apply_live_backfill_to_provider(app_type: &AppType, provider: &mut Provider, live_config: &Value) {
+        provider.settings_config = match app_type {
+            // Gemini keeps additional profile-only fields (authFiles/config),
+            // so backfill updates env from live while preserving existing fields.
+            AppType::Gemini => {
+                merge_gemini_backfill_with_existing(&provider.settings_config, live_config)
+            }
+            // Antigravity keeps an opaque state.vscdb snapshot; backfill should
+            // capture the full live payload as-is.
+            AppType::Antigravity => live_config.clone(),
+            // Additive mode apps should persist their current provider fragment as-is.
+            AppType::OpenCode | AppType::OpenClaw => live_config.clone(),
+            // Other switch-mode apps only persist provider key fields.
+            _ => backfill_key_fields(app_type, live_config),
+        };
+        if matches!(app_type, AppType::Claude) {
+            backfill_claude_meta_fields(provider, live_config);
+        }
+        Self::normalize_provider_if_claude(app_type, provider);
+    }
+
+    fn backfill_provider_by_id_best_effort(
+        state: &AppState,
+        app_type: &AppType,
+        current_id: &str,
+        providers: &indexmap::IndexMap<String, Provider>,
+        warnings: Option<&mut Vec<String>>,
+        context: &str,
+    ) {
+        let Some(mut current_provider) = providers.get(current_id).cloned() else {
+            log::debug!(
+                "Skip {} backfill for '{}' because provider '{}' is missing",
+                context,
+                app_type.as_str(),
+                current_id
+            );
+            return;
+        };
+
+        let live_config = match Self::read_live_backfill_snapshot(app_type, current_id) {
+            Ok(value) => value,
+            Err(e) => {
+                log::warn!(
+                    "Skip {} backfill for '{}' provider '{}' due to live read error: {e}",
+                    context,
+                    app_type.as_str(),
+                    current_id
+                );
+                return;
+            }
+        };
+
+        Self::apply_live_backfill_to_provider(app_type, &mut current_provider, &live_config);
+
+        if let Err(e) = state.db.save_provider(app_type.as_str(), &current_provider) {
+            log::warn!(
+                "{} backfill save failed for '{}' provider '{}': {e}",
+                context,
+                app_type.as_str(),
+                current_id
+            );
+            if let Some(warnings) = warnings {
+                warnings.push(format!("backfill_failed:{current_id}"));
+            }
+        }
+    }
+
+    fn backfill_current_provider_best_effort(state: &AppState, app_type: &AppType) {
+        let current_id = match crate::settings::get_effective_current_provider(&state.db, app_type) {
+            Ok(value) => value,
+            Err(e) => {
+                log::warn!(
+                    "Skip logout backfill for '{}' due to current-provider resolve error: {e}",
+                    app_type.as_str()
+                );
+                return;
+            }
+        };
+        let Some(current_id) = current_id else {
+            return;
+        };
+
+        let providers = match state.db.get_all_providers(app_type.as_str()) {
+            Ok(value) => value,
+            Err(e) => {
+                log::warn!(
+                    "Skip logout backfill for '{}' due to provider list read error: {e}",
+                    app_type.as_str()
+                );
+                return;
+            }
+        };
+
+        Self::backfill_provider_by_id_best_effort(
+            state,
+            app_type,
+            &current_id,
+            &providers,
+            None,
+            "logout",
+        );
+    }
+
     pub fn logout_context(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
-        if matches!(app_type, AppType::Claude | AppType::Codex | AppType::Gemini) {
+        if matches!(
+            app_type,
+            AppType::Claude | AppType::Codex | AppType::Gemini | AppType::Antigravity
+        ) {
             let is_app_taken_over =
                 futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
                     .ok()
@@ -705,6 +816,7 @@ impl ProviderService {
             }
         }
 
+        Self::backfill_current_provider_best_effort(state, &app_type);
         reset_app_live_files(&app_type)?;
         crate::settings::set_current_provider(&app_type, None)?;
         state.db.clear_current_provider(app_type.as_str())?;
@@ -908,6 +1020,36 @@ impl ProviderService {
                 use crate::gemini_config::validate_gemini_settings;
                 validate_gemini_settings(&provider.settings_config)?
             }
+            AppType::Antigravity => {
+                use base64::prelude::*;
+
+                let settings = provider.settings_config.as_object().ok_or_else(|| {
+                    AppError::localized(
+                        "provider.antigravity.settings.not_object",
+                        "Antigravity 配置必须是 JSON 对象",
+                        "Antigravity configuration must be a JSON object",
+                    )
+                })?;
+
+                let payload = settings
+                    .get("stateVscdbBase64")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.antigravity.state.missing",
+                            "Antigravity 配置缺少 state.vscdb 文件内容",
+                            "Antigravity configuration is missing state.vscdb content",
+                        )
+                    })?;
+
+                BASE64_STANDARD.decode(payload).map_err(|e| {
+                    AppError::localized(
+                        "provider.antigravity.state.invalid_base64",
+                        format!("Antigravity 配置中的 state.vscdb 编码无效: {e}"),
+                        format!("Invalid state.vscdb base64 payload in Antigravity config: {e}"),
+                    )
+                })?;
+            }
             AppType::OpenCode => {
                 // OpenCode uses a different config structure: { npm, options, models }
                 // Basic validation - must be an object
@@ -1067,6 +1209,11 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
+            AppType::Antigravity => Err(AppError::localized(
+                "provider.antigravity.credentials.unsupported",
+                "Antigravity 不支持凭据提取",
+                "Antigravity does not support credential extraction",
+            )),
             AppType::OpenCode => {
                 // OpenCode uses options.apiKey and options.baseURL
                 let options = provider

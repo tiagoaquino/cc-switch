@@ -27,11 +27,13 @@ interface BasicFormFieldsProps {
   form: UseFormReturn<ProviderFormData>;
   /** Slot to render content between icon and name fields */
   beforeNameSlot?: ReactNode;
+  hideIconSelector?: boolean;
 }
 
 export function BasicFormFields({
   form,
   beforeNameSlot,
+  hideIconSelector = false,
 }: BasicFormFieldsProps) {
   const { t } = useTranslation();
   const [iconDialogOpen, setIconDialogOpen] = useState(false);
@@ -51,72 +53,73 @@ export function BasicFormFields({
 
   return (
     <>
-      {/* 图标选择区域 - 顶部居中，可选 */}
-      <div className="flex justify-center mb-6">
-        <Dialog open={iconDialogOpen} onOpenChange={setIconDialogOpen}>
-          <DialogTrigger asChild>
-            <button
-              type="button"
-              className="w-20 h-20 p-3 rounded-xl border-2 border-muted hover:border-primary transition-colors cursor-pointer bg-muted/30 hover:bg-muted/50 flex items-center justify-center"
-              title={
-                currentIcon
-                  ? t("providerIcon.clickToChange", {
-                      defaultValue: "点击更换图标",
-                    })
-                  : t("providerIcon.clickToSelect", {
-                      defaultValue: "点击选择图标",
-                    })
-              }
+      {!hideIconSelector && (
+        <div className="flex justify-center mb-6">
+          <Dialog open={iconDialogOpen} onOpenChange={setIconDialogOpen}>
+            <DialogTrigger asChild>
+              <button
+                type="button"
+                className="w-20 h-20 p-3 rounded-xl border-2 border-muted hover:border-primary transition-colors cursor-pointer bg-muted/30 hover:bg-muted/50 flex items-center justify-center"
+                title={
+                  currentIcon
+                    ? t("providerIcon.clickToChange", {
+                        defaultValue: "点击更换图标",
+                      })
+                    : t("providerIcon.clickToSelect", {
+                        defaultValue: "点击选择图标",
+                      })
+                }
+              >
+                <ProviderIcon
+                  icon={currentIcon}
+                  name={providerName}
+                  color={effectiveIconColor}
+                  size={48}
+                />
+              </button>
+            </DialogTrigger>
+            <DialogContent
+              variant="fullscreen"
+              zIndex="top"
+              overlayClassName="bg-[hsl(var(--background))] backdrop-blur-0"
+              className="p-0 sm:rounded-none"
             >
-              <ProviderIcon
-                icon={currentIcon}
-                name={providerName}
-                color={effectiveIconColor}
-                size={48}
-              />
-            </button>
-          </DialogTrigger>
-          <DialogContent
-            variant="fullscreen"
-            zIndex="top"
-            overlayClassName="bg-[hsl(var(--background))] backdrop-blur-0"
-            className="p-0 sm:rounded-none"
-          >
-            <div className="flex h-full flex-col">
-              <div className="flex-shrink-0 py-4 border-b border-border-default bg-muted/40">
-                <div className="px-6 flex items-center gap-4">
-                  <DialogClose asChild>
-                    <Button type="button" variant="outline" size="icon">
-                      <ArrowLeft className="h-4 w-4" />
-                    </Button>
-                  </DialogClose>
-                  <p className="text-lg font-semibold leading-tight">
-                    {t("providerIcon.selectIcon", {
-                      defaultValue: "选择图标",
-                    })}
-                  </p>
-                </div>
-              </div>
-              <div className="flex-1 overflow-y-auto">
-                <div className="space-y-2 px-6 py-6 w-full">
-                  <IconPicker
-                    value={currentIcon}
-                    onValueChange={handleIconSelect}
-                    color={effectiveIconColor}
-                  />
-                  <div className="flex justify-end gap-2">
+              <div className="flex h-full flex-col">
+                <div className="flex-shrink-0 py-4 border-b border-border-default bg-muted/40">
+                  <div className="px-6 flex items-center gap-4">
                     <DialogClose asChild>
-                      <Button type="button" variant="outline">
-                        {t("common.done", { defaultValue: "完成" })}
+                      <Button type="button" variant="outline" size="icon">
+                        <ArrowLeft className="h-4 w-4" />
                       </Button>
                     </DialogClose>
+                    <p className="text-lg font-semibold leading-tight">
+                      {t("providerIcon.selectIcon", {
+                        defaultValue: "选择图标",
+                      })}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto">
+                  <div className="space-y-2 px-6 py-6 w-full">
+                    <IconPicker
+                      value={currentIcon}
+                      onValueChange={handleIconSelect}
+                      color={effectiveIconColor}
+                    />
+                    <div className="flex justify-end gap-2">
+                      <DialogClose asChild>
+                        <Button type="button" variant="outline">
+                          {t("common.done", { defaultValue: "完成" })}
+                        </Button>
+                      </DialogClose>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-      </div>
+            </DialogContent>
+          </Dialog>
+        </div>
+      )}
 
       {/* Slot for additional fields between icon and name */}
       {beforeNameSlot}

@@ -147,6 +147,11 @@ pub(crate) fn build_provider_from_request(
         AppType::Gemini => build_gemini_settings(request),
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_openclaw_settings(request),
+        AppType::Antigravity => {
+            return Err(AppError::InvalidInput(
+                "Antigravity does not support deeplink provider import".to_string(),
+            ));
+        }
     };
 
     // Build usage script configuration if provided

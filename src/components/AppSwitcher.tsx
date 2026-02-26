@@ -2,6 +2,7 @@ import type { AppId } from "@/lib/api";
 import type { VisibleApps } from "@/types";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { cn } from "@/lib/utils";
+import AntigravityLogo from "@/assets/icons/antigravity-logo.png";
 
 interface AppSwitcherProps {
   activeApp: AppId;
@@ -10,7 +11,14 @@ interface AppSwitcherProps {
   compact?: boolean;
 }
 
-const ALL_APPS: AppId[] = ["claude", "codex", "gemini", "opencode", "openclaw"];
+const ALL_APPS: AppId[] = [
+  "claude",
+  "codex",
+  "gemini",
+  "antigravity",
+  "opencode",
+  "openclaw",
+];
 const STORAGE_KEY = "cc-switch-last-app";
 
 export function AppSwitcher({
@@ -29,6 +37,7 @@ export function AppSwitcher({
     claude: "claude",
     codex: "openai",
     gemini: "gemini",
+    antigravity: "",
     opencode: "opencode",
     openclaw: "openclaw",
   };
@@ -36,6 +45,7 @@ export function AppSwitcher({
     claude: "Claude",
     codex: "Codex",
     gemini: "Gemini",
+    antigravity: "Google Antigravity",
     opencode: "OpenCode",
     openclaw: "OpenClaw",
   };
@@ -60,11 +70,21 @@ export function AppSwitcher({
               : "text-muted-foreground hover:text-foreground hover:bg-background/50",
           )}
         >
-          <ProviderIcon
-            icon={appIconName[app]}
-            name={appDisplayName[app]}
-            size={iconSize}
-          />
+          {app === "antigravity" ? (
+            <img
+              src={AntigravityLogo}
+              width={iconSize}
+              height={iconSize}
+              alt={appDisplayName[app]}
+              loading="lazy"
+            />
+          ) : (
+            <ProviderIcon
+              icon={appIconName[app]}
+              name={appDisplayName[app]}
+              size={iconSize}
+            />
+          )}
           <span
             className={cn(
               "transition-all duration-200 whitespace-nowrap overflow-hidden",

@@ -16,6 +16,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["qwen", "tongyi"],
     defaultColor: "#FF6A00",
   },
+  antigravity: {
+    name: "antigravity",
+    displayName: "Antigravity",
+    category: "ai-provider",
+    keywords: ["google", "antigravity"],
+    defaultColor: "#2B76F6",
+  },
   anthropic: {
     name: "anthropic",
     displayName: "Anthropic",

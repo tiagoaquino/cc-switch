@@ -88,6 +88,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
       codexConfigDir: sanitizeDir(data.codexConfigDir),
       geminiConfigDir: sanitizeDir(data.geminiConfigDir),
+      antigravityConfigDir: sanitizeDir(data.antigravityConfigDir),
       opencodeConfigDir: sanitizeDir(data.opencodeConfigDir),
       language: normalizedLanguage,
     };
@@ -146,6 +147,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
         codexConfigDir: sanitizeDir(serverData.codexConfigDir),
         geminiConfigDir: sanitizeDir(serverData.geminiConfigDir),
+        antigravityConfigDir: sanitizeDir(serverData.antigravityConfigDir),
         opencodeConfigDir: sanitizeDir(serverData.opencodeConfigDir),
         language: normalizedLanguage,
       };

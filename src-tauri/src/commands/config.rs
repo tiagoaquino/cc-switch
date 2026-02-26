@@ -50,6 +50,15 @@ pub async fn get_config_status(app: String) -> Result<ConfigStatus, String> {
 
             Ok(ConfigStatus { exists, path })
         }
+        AppType::Antigravity => {
+            let config_path = crate::antigravity_config::get_antigravity_state_db_path();
+            let exists = config_path.exists();
+            let path = crate::antigravity_config::get_antigravity_dir()
+                .to_string_lossy()
+                .to_string();
+
+            Ok(ConfigStatus { exists, path })
+        }
         AppType::OpenCode => {
             let config_path = crate::opencode_config::get_opencode_config_path();
             let exists = config_path.exists();
@@ -82,6 +91,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::Claude => config::get_claude_config_dir(),
         AppType::Codex => codex_config::get_codex_config_dir(),
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
+        AppType::Antigravity => crate::antigravity_config::get_antigravity_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
     };
@@ -95,6 +105,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::Claude => config::get_claude_config_dir(),
         AppType::Codex => codex_config::get_codex_config_dir(),
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
+        AppType::Antigravity => crate::antigravity_config::get_antigravity_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
     };

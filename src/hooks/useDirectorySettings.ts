@@ -5,13 +5,20 @@ import { homeDir, join } from "@tauri-apps/api/path";
 import { settingsApi, type AppId } from "@/lib/api";
 import type { SettingsFormState } from "./useSettingsForm";
 
-type DirectoryKey = "appConfig" | "claude" | "codex" | "gemini" | "opencode";
+type DirectoryKey =
+  | "appConfig"
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "antigravity"
+  | "opencode";
 
 export interface ResolvedDirectories {
   appConfig: string;
   claude: string;
   codex: string;
   gemini: string;
+  antigravity: string;
   opencode: string;
 }
 
@@ -46,6 +53,8 @@ const computeDefaultConfigDir = async (
           ? ".codex"
           : app === "gemini"
             ? ".gemini"
+            : app === "antigravity"
+              ? ".config/Antigravity/User/globalStorage"
             : ".config/opencode";
     return await join(home, folder);
   } catch (error) {
@@ -77,6 +86,7 @@ export interface UseDirectorySettingsResult {
     claudeDir?: string,
     codexDir?: string,
     geminiDir?: string,
+    antigravityDir?: string,
     opencodeDir?: string,
   ) => void;
 }
@@ -104,6 +114,7 @@ export function useDirectorySettings({
     claude: "",
     codex: "",
     gemini: "",
+    antigravity: "",
     opencode: "",
   });
   const [isLoading, setIsLoading] = useState(true);
@@ -113,6 +124,7 @@ export function useDirectorySettings({
     claude: "",
     codex: "",
     gemini: "",
+    antigravity: "",
     opencode: "",
   });
   const initialAppConfigDirRef = useRef<string | undefined>(undefined);
@@ -129,22 +141,26 @@ export function useDirectorySettings({
           claudeDir,
           codexDir,
           geminiDir,
+          antigravityDir,
           opencodeDir,
           defaultAppConfig,
           defaultClaudeDir,
           defaultCodexDir,
           defaultGeminiDir,
+          defaultAntigravityDir,
           defaultOpencodeDir,
         ] = await Promise.all([
           settingsApi.getAppConfigDirOverride(),
           settingsApi.getConfigDir("claude"),
           settingsApi.getConfigDir("codex"),
           settingsApi.getConfigDir("gemini"),
+          settingsApi.getConfigDir("antigravity"),
           settingsApi.getConfigDir("opencode"),
           computeDefaultAppConfigDir(),
           computeDefaultConfigDir("claude"),
           computeDefaultConfigDir("codex"),
           computeDefaultConfigDir("gemini"),
+          computeDefaultConfigDir("antigravity"),
           computeDefaultConfigDir("opencode"),
         ]);
 
@@ -157,6 +173,7 @@ export function useDirectorySettings({
           claude: defaultClaudeDir ?? "",
           codex: defaultCodexDir ?? "",
           gemini: defaultGeminiDir ?? "",
+          antigravity: defaultAntigravityDir ?? "",
           opencode: defaultOpencodeDir ?? "",
         };
 
@@ -168,6 +185,7 @@ export function useDirectorySettings({
           claude: claudeDir || defaultsRef.current.claude,
           codex: codexDir || defaultsRef.current.codex,
           gemini: geminiDir || defaultsRef.current.gemini,
+          antigravity: antigravityDir || defaultsRef.current.antigravity,
           opencode: opencodeDir || defaultsRef.current.opencode,
         });
       } catch (error) {
@@ -201,7 +219,9 @@ export function useDirectorySettings({
               ? { codexConfigDir: sanitized }
               : key === "gemini"
                 ? { geminiConfigDir: sanitized }
-                : { opencodeConfigDir: sanitized },
+                : key === "antigravity"
+                  ? { antigravityConfigDir: sanitized }
+                  : { opencodeConfigDir: sanitized },
         );
       }
 
@@ -229,7 +249,9 @@ export function useDirectorySettings({
             ? "codex"
             : app === "gemini"
               ? "gemini"
-              : "opencode",
+              : app === "antigravity"
+                ? "antigravity"
+                : "opencode",
         value,
       );
     },
@@ -245,7 +267,9 @@ export function useDirectorySettings({
             ? "codex"
             : app === "gemini"
               ? "gemini"
-              : "opencode";
+              : app === "antigravity"
+                ? "antigravity"
+                : "opencode";
       const currentValue =
         key === "claude"
           ? (settings?.claudeConfigDir ?? resolvedDirs.claude)
@@ -253,6 +277,8 @@ export function useDirectorySettings({
             ? (settings?.codexConfigDir ?? resolvedDirs.codex)
             : key === "gemini"
               ? (settings?.geminiConfigDir ?? resolvedDirs.gemini)
+              : key === "antigravity"
+                ? (settings?.antigravityConfigDir ?? resolvedDirs.antigravity)
               : (settings?.opencodeConfigDir ?? resolvedDirs.opencode);
 
       try {
@@ -301,7 +327,9 @@ export function useDirectorySettings({
             ? "codex"
             : app === "gemini"
               ? "gemini"
-              : "opencode";
+              : app === "antigravity"
+                ? "antigravity"
+                : "opencode";
       if (!defaultsRef.current[key]) {
         const fallback = await computeDefaultConfigDir(app);
         if (fallback) {
@@ -334,6 +362,7 @@ export function useDirectorySettings({
       claudeDir?: string,
       codexDir?: string,
       geminiDir?: string,
+      antigravityDir?: string,
       opencodeDir?: string,
     ) => {
       setAppConfigDir(initialAppConfigDirRef.current);
@@ -343,6 +372,7 @@ export function useDirectorySettings({
         claude: claudeDir ?? defaultsRef.current.claude,
         codex: codexDir ?? defaultsRef.current.codex,
         gemini: geminiDir ?? defaultsRef.current.gemini,
+        antigravity: antigravityDir ?? defaultsRef.current.antigravity,
         opencode: opencodeDir ?? defaultsRef.current.opencode,
       });
     },

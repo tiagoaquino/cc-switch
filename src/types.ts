@@ -189,6 +189,7 @@ export interface VisibleApps {
   claude: boolean;
   codex: boolean;
   gemini: boolean;
+  antigravity: boolean;
   opencode: boolean;
   openclaw: boolean;
 }
@@ -260,6 +261,8 @@ export interface Settings {
   codexConfigDir?: string;
   // 覆盖 Gemini 配置目录（可选）
   geminiConfigDir?: string;
+  // 覆盖 Antigravity 配置目录（可选）
+  antigravityConfigDir?: string;
   // 覆盖 OpenCode 配置目录（可选）
   opencodeConfigDir?: string;
   // 覆盖 OpenClaw 配置目录（可选）
@@ -272,6 +275,8 @@ export interface Settings {
   currentProviderCodex?: string;
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）
   currentProviderGemini?: string;
+  // 当前 Antigravity 供应商 ID（优先于数据库 is_current）
+  currentProviderAntigravity?: string;
 
   // ===== Skill 同步设置 =====
   // Skill 同步方式：auto（默认，优先 symlink）、symlink、copy

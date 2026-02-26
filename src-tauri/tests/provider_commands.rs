@@ -1,16 +1,25 @@
+use base64::prelude::*;
 use serde_json::json;
 
 use cc_switch_lib::{
     get_claude_credentials_path, get_codex_auth_path, get_codex_config_path,
     logout_provider_context_test_hook, read_json_file, switch_provider_test_hook,
-    write_codex_live_atomic, AppError, AppType, McpApps, McpServer, MultiAppConfig, Provider,
-    ProviderMeta,
+    update_settings, write_codex_live_atomic, AppError, AppSettings, AppType, McpApps, McpServer,
+    MultiAppConfig, Provider, ProviderMeta,
 };
 
 #[path = "support.rs"]
 mod support;
 use std::collections::HashMap;
 use support::{create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex};
+
+fn configure_antigravity_test_dir(home: &std::path::Path) -> std::path::PathBuf {
+    let antigravity_dir = home.join(".antigravity").join("User").join("globalStorage");
+    let mut settings = AppSettings::default();
+    settings.antigravity_config_dir = Some(antigravity_dir.to_string_lossy().to_string());
+    update_settings(settings).expect("set antigravity test override");
+    antigravity_dir
+}
 
 #[test]
 fn switch_provider_updates_codex_live_and_state() {
@@ -406,6 +415,84 @@ fn switch_provider_codex_missing_auth_returns_error_and_keeps_state() {
 }
 
 #[test]
+fn switch_provider_antigravity_backfills_previous_provider_state() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let antigravity_dir = configure_antigravity_test_dir(home);
+    let state_path = antigravity_dir.join("state.vscdb");
+
+    std::fs::create_dir_all(&antigravity_dir).expect("create antigravity dir");
+    let live_before = b"command-live-before-switch".to_vec();
+    std::fs::write(&state_path, &live_before).expect("seed antigravity live state");
+
+    let old_snapshot = BASE64_STANDARD.encode(b"old-command-snapshot");
+    let new_snapshot_bytes = b"new-command-snapshot".to_vec();
+    let new_snapshot = BASE64_STANDARD.encode(&new_snapshot_bytes);
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Antigravity)
+            .expect("antigravity manager");
+        manager.current = "old-provider".to_string();
+        manager.providers.insert(
+            "old-provider".to_string(),
+            Provider::with_id(
+                "old-provider".to_string(),
+                "Old Antigravity".to_string(),
+                json!({
+                    "stateVscdbBase64": old_snapshot
+                }),
+                Some("https://antigravity.google".to_string()),
+            ),
+        );
+        manager.providers.insert(
+            "new-provider".to_string(),
+            Provider::with_id(
+                "new-provider".to_string(),
+                "New Antigravity".to_string(),
+                json!({
+                    "stateVscdbBase64": new_snapshot
+                }),
+                Some("https://antigravity.google".to_string()),
+            ),
+        );
+    }
+
+    let app_state = create_test_state_with_config(&config).expect("create test state");
+    let result = switch_provider_test_hook(&app_state, AppType::Antigravity, "new-provider")
+        .expect("command switch provider should succeed");
+    assert!(
+        result.warnings.is_empty(),
+        "command switch should not produce warnings"
+    );
+
+    let providers = app_state
+        .db
+        .get_all_providers(AppType::Antigravity.as_str())
+        .expect("get antigravity providers");
+    let old_provider = providers
+        .get("old-provider")
+        .expect("old antigravity provider should exist");
+    let expected_backfill = BASE64_STANDARD.encode(&live_before);
+    assert_eq!(
+        old_provider
+            .settings_config
+            .get("stateVscdbBase64")
+            .and_then(|v| v.as_str()),
+        Some(expected_backfill.as_str()),
+        "command switch should backfill old antigravity provider from live state"
+    );
+
+    let live_after = std::fs::read(&state_path).expect("read antigravity state after command switch");
+    assert_eq!(
+        live_after, new_snapshot_bytes,
+        "command switch should write target provider live state"
+    );
+}
+
+#[test]
 fn logout_provider_context_command_smoke_test() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
@@ -424,7 +511,7 @@ fn logout_provider_context_command_smoke_test() {
                 "Gemini Current".to_string(),
                 json!({
                     "env": {
-                        "GEMINI_API_KEY": "gemini-key",
+                        "GEMINI_API_KEY": "stale-provider-key",
                         "GOOGLE_GEMINI_BASE_URL": "https://generativelanguage.googleapis.com"
                     },
                     "config": {}
@@ -464,5 +551,20 @@ fn logout_provider_context_command_smoke_test() {
             .get_current_provider("gemini")
             .expect("db current provider"),
         None
+    );
+    let providers = app_state
+        .db
+        .get_all_providers(AppType::Gemini.as_str())
+        .expect("read providers after logout");
+    let current_provider = providers
+        .get("gemini-current")
+        .expect("current provider should still exist");
+    assert_eq!(
+        current_provider
+            .settings_config
+            .pointer("/env/GEMINI_API_KEY")
+            .and_then(|v| v.as_str()),
+        Some("gemini-key"),
+        "logout command should backfill live Gemini .env into current provider"
     );
 }

@@ -1,3 +1,4 @@
+use base64::prelude::*;
 use serde_json::json;
 
 use cc_switch_lib::{
@@ -1199,6 +1200,162 @@ fn provider_service_delete_current_provider_returns_error() {
     }
 }
 
+#[test]
+fn provider_service_switch_antigravity_backfills_previous_provider_state() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let antigravity_dir = configure_antigravity_test_dir(home);
+    let state_path = antigravity_dir.join("state.vscdb");
+
+    std::fs::create_dir_all(&antigravity_dir).expect("create antigravity dir");
+    let live_before = b"live-state-before-switch".to_vec();
+    std::fs::write(&state_path, &live_before).expect("seed antigravity live state");
+
+    let old_snapshot = BASE64_STANDARD.encode(b"stale-provider-state");
+    let new_snapshot_bytes = b"target-provider-state".to_vec();
+    let new_snapshot = BASE64_STANDARD.encode(&new_snapshot_bytes);
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Antigravity)
+            .expect("antigravity manager");
+        manager.current = "old-provider".to_string();
+        manager.providers.insert(
+            "old-provider".to_string(),
+            Provider::with_id(
+                "old-provider".to_string(),
+                "Old Antigravity".to_string(),
+                json!({
+                    "stateVscdbBase64": old_snapshot
+                }),
+                Some("https://antigravity.google".to_string()),
+            ),
+        );
+        manager.providers.insert(
+            "new-provider".to_string(),
+            Provider::with_id(
+                "new-provider".to_string(),
+                "New Antigravity".to_string(),
+                json!({
+                    "stateVscdbBase64": new_snapshot
+                }),
+                Some("https://antigravity.google".to_string()),
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    let result = ProviderService::switch(&state, AppType::Antigravity, "new-provider")
+        .expect("switch antigravity provider should succeed");
+    assert!(
+        result.warnings.is_empty(),
+        "backfill should succeed without warnings"
+    );
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Antigravity.as_str())
+        .expect("read antigravity providers");
+    let old_provider = providers
+        .get("old-provider")
+        .expect("old antigravity provider should exist");
+    let expected_backfill = BASE64_STANDARD.encode(&live_before);
+    assert_eq!(
+        old_provider
+            .settings_config
+            .get("stateVscdbBase64")
+            .and_then(|v| v.as_str()),
+        Some(expected_backfill.as_str()),
+        "previous provider should receive live state.vscdb snapshot"
+    );
+
+    let live_after = std::fs::read(&state_path).expect("read antigravity live state after switch");
+    assert_eq!(
+        live_after, new_snapshot_bytes,
+        "target provider state.vscdb should be written to live path"
+    );
+}
+
+#[test]
+fn provider_service_switch_antigravity_backfill_missing_live_keeps_previous_snapshot() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let antigravity_dir = configure_antigravity_test_dir(home);
+    let state_path = antigravity_dir.join("state.vscdb");
+
+    if state_path.exists() {
+        std::fs::remove_file(&state_path).expect("remove stale antigravity state");
+    }
+
+    let old_snapshot_bytes = b"keep-this-snapshot".to_vec();
+    let old_snapshot = BASE64_STANDARD.encode(&old_snapshot_bytes);
+    let new_snapshot_bytes = b"target-snapshot".to_vec();
+    let new_snapshot = BASE64_STANDARD.encode(&new_snapshot_bytes);
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Antigravity)
+            .expect("antigravity manager");
+        manager.current = "old-provider".to_string();
+        manager.providers.insert(
+            "old-provider".to_string(),
+            Provider::with_id(
+                "old-provider".to_string(),
+                "Old Antigravity".to_string(),
+                json!({
+                    "stateVscdbBase64": old_snapshot
+                }),
+                Some("https://antigravity.google".to_string()),
+            ),
+        );
+        manager.providers.insert(
+            "new-provider".to_string(),
+            Provider::with_id(
+                "new-provider".to_string(),
+                "New Antigravity".to_string(),
+                json!({
+                    "stateVscdbBase64": new_snapshot
+                }),
+                Some("https://antigravity.google".to_string()),
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    let result = ProviderService::switch(&state, AppType::Antigravity, "new-provider")
+        .expect("switch antigravity provider should succeed");
+    assert!(
+        result.warnings.is_empty(),
+        "live missing should be ignored without save warnings"
+    );
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Antigravity.as_str())
+        .expect("read antigravity providers");
+    let old_provider = providers
+        .get("old-provider")
+        .expect("old antigravity provider should exist");
+    assert_eq!(
+        old_provider
+            .settings_config
+            .get("stateVscdbBase64")
+            .and_then(|v| v.as_str()),
+        Some(old_snapshot.as_str()),
+        "backfill failure should keep existing provider snapshot"
+    );
+
+    let live_after = std::fs::read(&state_path).expect("read antigravity live state after switch");
+    assert_eq!(
+        live_after, new_snapshot_bytes,
+        "switch should still write target provider snapshot to live path"
+    );
+}
+
 fn create_basic_provider(app_type: AppType, id: &str) -> Provider {
     match app_type {
         AppType::Claude => Provider::with_id(
@@ -1240,6 +1397,14 @@ env_key = "OPENAI_API_KEY"
                 "config": {}
             }),
             None,
+        ),
+        AppType::Antigravity => Provider::with_id(
+            id.to_string(),
+            "Antigravity Provider".to_string(),
+            json!({
+                "stateVscdbBase64": BASE64_STANDARD.encode(b"antigravity-state")
+            }),
+            Some("https://antigravity.google".to_string()),
         ),
         AppType::OpenCode => Provider::with_id(
             id.to_string(),
@@ -1294,6 +1459,14 @@ fn seed_live_file(path: &std::path::Path, content: &str) {
         std::fs::create_dir_all(parent).expect("create parent dir");
     }
     std::fs::write(path, content).expect("seed live file");
+}
+
+fn configure_antigravity_test_dir(home: &std::path::Path) -> std::path::PathBuf {
+    let antigravity_dir = home.join(".antigravity").join("User").join("globalStorage");
+    let mut settings = AppSettings::default();
+    settings.antigravity_config_dir = Some(antigravity_dir.to_string_lossy().to_string());
+    update_settings(settings).expect("set antigravity test override");
+    antigravity_dir
 }
 
 #[test]
@@ -1356,6 +1529,35 @@ fn logout_context_claude_deletes_live_files_and_clears_current() {
         ProviderService::current(&state, AppType::Claude).expect("effective current"),
         ""
     );
+    let providers = state
+        .db
+        .get_all_providers(AppType::Claude.as_str())
+        .expect("read providers after logout");
+    let current_provider = providers
+        .get("claude-current")
+        .expect("current provider should still exist");
+    assert_eq!(
+        current_provider
+            .settings_config
+            .pointer("/env/ANTHROPIC_API_KEY")
+            .and_then(|v| v.as_str()),
+        Some("x"),
+        "logout should backfill Claude live API key to current provider"
+    );
+    assert_eq!(
+        current_provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.claude_credentials.as_ref())
+            .and_then(|value| value.get("accessToken"))
+            .and_then(|v| v.as_str()),
+        Some("x"),
+        "logout should backfill Claude live credentials sidecar to provider meta"
+    );
+    assert!(
+        current_provider.settings_config.get("credentials").is_none(),
+        "credentials should remain out of Claude settings_config after backfill"
+    );
 }
 
 #[test]
@@ -1405,6 +1607,21 @@ fn logout_context_codex_deletes_live_files_and_clears_current() {
         ProviderService::current(&state, AppType::Codex).expect("effective current"),
         ""
     );
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("read providers after logout");
+    let current_provider = providers
+        .get("codex-current")
+        .expect("current provider should still exist");
+    assert_eq!(
+        current_provider
+            .settings_config
+            .pointer("/auth/OPENAI_API_KEY")
+            .and_then(|v| v.as_str()),
+        Some("x"),
+        "logout should backfill Codex auth.json to current provider"
+    );
 }
 
 #[test]
@@ -1415,7 +1632,7 @@ fn logout_context_gemini_deletes_live_files_and_clears_current() {
 
     seed_live_file(
         &home.join(".gemini").join(".env"),
-        "GEMINI_API_KEY=gemini-key\n",
+        "GEMINI_API_KEY=logout-live-key\n",
     );
     seed_live_file(
         &home.join(".gemini").join("settings.json"),
@@ -1470,6 +1687,82 @@ fn logout_context_gemini_deletes_live_files_and_clears_current() {
         ProviderService::current(&state, AppType::Gemini).expect("effective current"),
         ""
     );
+    let providers = state
+        .db
+        .get_all_providers(AppType::Gemini.as_str())
+        .expect("read providers after logout");
+    let current_provider = providers
+        .get("gemini-current")
+        .expect("current provider should still exist");
+    assert_eq!(
+        current_provider
+            .settings_config
+            .pointer("/env/GEMINI_API_KEY")
+            .and_then(|v| v.as_str()),
+        Some("logout-live-key"),
+        "logout should backfill Gemini .env to current provider"
+    );
+    assert!(
+        current_provider.settings_config.get("config").is_some(),
+        "Gemini profile fields should be preserved during logout backfill"
+    );
+}
+
+#[test]
+fn logout_context_antigravity_deletes_live_files_and_clears_current() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let antigravity_dir = configure_antigravity_test_dir(home);
+    let state_path = antigravity_dir.join("state.vscdb");
+
+    std::fs::create_dir_all(&antigravity_dir).expect("create antigravity dir");
+    std::fs::write(&state_path, b"antigravity-live-state").expect("seed antigravity state.vscdb");
+
+    let config = create_config_with_current(AppType::Antigravity, "antigravity-current");
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_current_provider("antigravity", "antigravity-current")
+        .expect("set current provider");
+    assert_eq!(
+        ProviderService::current(&state, AppType::Antigravity).expect("current"),
+        "antigravity-current"
+    );
+
+    ProviderService::logout_context(&state, AppType::Antigravity).expect("logout should succeed");
+
+    assert!(
+        !state_path.exists(),
+        "state.vscdb should be deleted for antigravity logout"
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider("antigravity")
+            .expect("db current provider"),
+        None
+    );
+    assert_eq!(
+        ProviderService::current(&state, AppType::Antigravity).expect("effective current"),
+        ""
+    );
+    let providers = state
+        .db
+        .get_all_providers(AppType::Antigravity.as_str())
+        .expect("read providers after logout");
+    let current_provider = providers
+        .get("antigravity-current")
+        .expect("current provider should still exist");
+    let expected = BASE64_STANDARD.encode(b"antigravity-live-state");
+    assert_eq!(
+        current_provider
+            .settings_config
+            .get("stateVscdbBase64")
+            .and_then(|v| v.as_str()),
+        Some(expected.as_str()),
+        "logout should backfill Antigravity state.vscdb snapshot"
+    );
 }
 
 #[test]
@@ -1488,7 +1781,22 @@ fn logout_context_opencode_deletes_live_files_and_clears_current_flags() {
 
     seed_live_file(
         &home.join(".config").join("opencode").join("opencode.json"),
-        r#"{"provider":{}}"#,
+        r#"{
+  "provider": {
+    "opencode-current": {
+      "npm": "@openrouter/ai-sdk-provider",
+      "options": {
+        "apiKey": "live-opencode-key",
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "models": {
+        "default": {
+          "name": "openai/gpt-4o-mini"
+        }
+      }
+    }
+  }
+}"#,
     );
     seed_live_file(
         &home.join(".config").join("opencode").join(".env"),
@@ -1531,6 +1839,21 @@ fn logout_context_opencode_deletes_live_files_and_clears_current_flags() {
             .expect("db current provider"),
         None
     );
+    let providers = state
+        .db
+        .get_all_providers(AppType::OpenCode.as_str())
+        .expect("read providers after logout");
+    let current_provider = providers
+        .get("opencode-current")
+        .expect("current provider should still exist");
+    assert_eq!(
+        current_provider
+            .settings_config
+            .pointer("/options/apiKey")
+            .and_then(|v| v.as_str()),
+        Some("live-opencode-key"),
+        "logout should backfill OpenCode current provider from live fragment"
+    );
 }
 
 #[test]
@@ -1544,7 +1867,23 @@ fn logout_context_openclaw_deletes_live_files_and_clears_current_flags() {
 
     seed_live_file(
         &home.join(".openclaw").join("openclaw.json"),
-        r#"{"providers":{}}"#,
+        r#"{
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "openclaw-current": {
+        "baseUrl": "https://api.openai.com/v1",
+        "apiKey": "live-openclaw-key",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "gpt-4o-mini"
+          }
+        ]
+      }
+    }
+  }
+}"#,
     );
 
     let config = create_config_with_current(AppType::OpenClaw, "openclaw-current");
@@ -1574,6 +1913,21 @@ fn logout_context_openclaw_deletes_live_files_and_clears_current_flags() {
             .get_current_provider("openclaw")
             .expect("db current provider"),
         None
+    );
+    let providers = state
+        .db
+        .get_all_providers(AppType::OpenClaw.as_str())
+        .expect("read providers after logout");
+    let current_provider = providers
+        .get("openclaw-current")
+        .expect("current provider should still exist");
+    assert_eq!(
+        current_provider
+            .settings_config
+            .pointer("/apiKey")
+            .and_then(|v| v.as_str()),
+        Some("live-openclaw-key"),
+        "logout should backfill OpenClaw current provider from live fragment"
     );
 }
 

@@ -104,6 +104,7 @@ const VALID_APPS: AppId[] = [
   "claude",
   "codex",
   "gemini",
+  "antigravity",
   "opencode",
   "openclaw",
 ];
@@ -159,6 +160,7 @@ function App() {
     claude: true,
     codex: true,
     gemini: true,
+    antigravity: true,
     opencode: true,
     openclaw: true,
   };
@@ -167,6 +169,7 @@ function App() {
     if (visibleApps.claude) return "claude";
     if (visibleApps.codex) return "codex";
     if (visibleApps.gemini) return "gemini";
+    if (visibleApps.antigravity) return "antigravity";
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     return "claude"; // fallback
@@ -242,11 +245,15 @@ function App() {
     activeApp === "openclaw" ||
     activeApp === "gemini";
   const canImportCurrentConfig =
-    activeApp === "claude" || activeApp === "codex" || activeApp === "gemini";
+    activeApp === "claude" ||
+    activeApp === "codex" ||
+    activeApp === "gemini" ||
+    activeApp === "antigravity";
   const canLogoutContext =
     activeApp === "claude" ||
     activeApp === "codex" ||
     activeApp === "gemini" ||
+    activeApp === "antigravity" ||
     activeApp === "opencode" ||
     activeApp === "openclaw";
 
@@ -795,7 +802,9 @@ function App() {
             <SkillsPage
               ref={skillsPageRef}
               initialApp={
-                activeApp === "opencode" || activeApp === "openclaw"
+                activeApp === "opencode" ||
+                activeApp === "openclaw" ||
+                activeApp === "antigravity"
                   ? "claude"
                   : activeApp
               }

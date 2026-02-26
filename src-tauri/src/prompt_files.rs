@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::app_config::AppType;
+use crate::antigravity_config::get_antigravity_dir;
 use crate::codex_config::get_codex_auth_path;
 use crate::config::get_claude_settings_path;
 use crate::error::AppError;
@@ -14,6 +15,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Claude => get_base_dir_with_fallback(get_claude_settings_path(), ".claude")?,
         AppType::Codex => get_base_dir_with_fallback(get_codex_auth_path(), ".codex")?,
         AppType::Gemini => get_gemini_dir(),
+        AppType::Antigravity => get_antigravity_dir(),
         AppType::OpenCode => get_opencode_dir(),
         AppType::OpenClaw => get_openclaw_dir(),
     };
@@ -22,6 +24,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Claude => "CLAUDE.md",
         AppType::Codex => "AGENTS.md",
         AppType::Gemini => "GEMINI.md",
+        AppType::Antigravity => "AGENTS.md",
         AppType::OpenCode => "AGENTS.md",
         AppType::OpenClaw => "AGENTS.md", // OpenClaw uses AGENTS.md for agent instructions
     };

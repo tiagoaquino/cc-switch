@@ -36,7 +36,7 @@ describe("App import current config button", () => {
     sessionStorage.clear();
   });
 
-  it.each(["claude", "codex", "gemini"] as const)(
+  it.each(["claude", "codex", "gemini", "antigravity"] as const)(
     "shows header import button for %s",
     async (appId) => {
       await renderAppFor(appId);
@@ -54,7 +54,16 @@ describe("App import current config button", () => {
     },
   );
 
-  it.each(["claude", "codex", "gemini", "opencode", "openclaw"] as const)(
+  it.each(
+    [
+      "claude",
+      "codex",
+      "gemini",
+      "antigravity",
+      "opencode",
+      "openclaw",
+    ] as const,
+  )(
     "shows header logout context button for %s",
     async (appId) => {
       await renderAppFor(appId);

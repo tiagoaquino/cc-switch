@@ -39,8 +39,9 @@ export function AddProviderDialog({
   onSubmit,
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
-  // OpenCode and OpenClaw don't support universal providers
-  const showUniversalTab = appId !== "opencode" && appId !== "openclaw";
+  // OpenCode, OpenClaw and Antigravity don't support universal providers
+  const showUniversalTab =
+    appId !== "opencode" && appId !== "openclaw" && appId !== "antigravity";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
     "app-specific",
   );

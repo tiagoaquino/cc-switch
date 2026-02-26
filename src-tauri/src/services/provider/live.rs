@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 
+use base64::prelude::*;
 use chrono::Local;
 use serde_json::{json, Value};
 
@@ -22,6 +23,8 @@ use super::gemini_auth::{
     detect_gemini_auth_type, ensure_google_oauth_security_flag, GeminiAuthType,
 };
 use super::normalize_claude_models_in_value;
+
+const ANTIGRAVITY_STATE_FIELD: &str = "stateVscdbBase64";
 
 pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     let mut v = settings.clone();
@@ -97,6 +100,35 @@ fn apply_claude_credentials_for_provider(provider: &Provider) -> Result<(), AppE
     Ok(())
 }
 
+fn decode_antigravity_state_from_provider(provider: &Provider) -> Result<Vec<u8>, AppError> {
+    let obj = provider.settings_config.as_object().ok_or_else(|| {
+        AppError::localized(
+            "provider.antigravity.settings.not_object",
+            "Antigravity 配置必须是 JSON 对象",
+            "Antigravity configuration must be a JSON object",
+        )
+    })?;
+
+    let encoded = obj
+        .get(ANTIGRAVITY_STATE_FIELD)
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            AppError::localized(
+                "provider.antigravity.state.missing",
+                "Antigravity 配置缺少 state.vscdb 文件内容",
+                "Antigravity configuration is missing state.vscdb content",
+            )
+        })?;
+
+    BASE64_STANDARD
+        .decode(encoded)
+        .map_err(|e| AppError::localized(
+            "provider.antigravity.state.invalid_base64",
+            format!("Antigravity 配置中的 state.vscdb 编码无效: {e}"),
+            format!("Invalid state.vscdb base64 payload in Antigravity config: {e}"),
+        ))
+}
+
 pub(crate) fn reset_app_live_files(app_type: &AppType) -> Result<(), AppError> {
     match app_type {
         AppType::Claude => {
@@ -120,6 +152,9 @@ pub(crate) fn reset_app_live_files(app_type: &AppType) -> Result<(), AppError> {
             delete_file(&get_gemini_settings_path())?;
             delete_file(&get_gemini_google_accounts_path())?;
             delete_file(&get_gemini_oauth_creds_path())?;
+        }
+        AppType::Antigravity => {
+            crate::antigravity_config::delete_antigravity_state_db()?;
         }
         AppType::OpenCode => {
             use crate::opencode_config::{get_opencode_config_path, get_opencode_env_path};
@@ -250,6 +285,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
             write_gemini_live(provider)?;
+        }
+        AppType::Antigravity => {
+            let bytes = decode_antigravity_state_from_provider(provider)?;
+            crate::antigravity_config::write_antigravity_state_db_bytes(&bytes)?;
         }
         AppType::OpenCode => {
             // OpenCode uses additive mode - write provider to config
@@ -440,6 +479,7 @@ pub(crate) fn write_live_partial(app_type: &AppType, provider: &Provider) -> Res
         AppType::Claude => write_claude_live_partial(provider),
         AppType::Codex => write_codex_live_partial(provider),
         AppType::Gemini => write_gemini_live_partial(provider),
+        AppType::Antigravity => write_live_snapshot(app_type, provider),
         // Additive mode apps still use full snapshot
         AppType::OpenCode | AppType::OpenClaw => write_live_snapshot(app_type, provider),
     }
@@ -954,6 +994,14 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
 
             Ok(result)
         }
+        AppType::Antigravity => {
+            use crate::antigravity_config::read_antigravity_state_db_bytes;
+
+            let bytes = read_antigravity_state_db_bytes()?;
+            Ok(json!({
+                ANTIGRAVITY_STATE_FIELD: BASE64_STANDARD.encode(bytes)
+            }))
+        }
         AppType::OpenCode => {
             use crate::opencode_config::{get_opencode_config_path, read_opencode_config};
 
@@ -1074,6 +1122,14 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
 
             result
         }
+        AppType::Antigravity => {
+            use crate::antigravity_config::read_antigravity_state_db_bytes;
+
+            let bytes = read_antigravity_state_db_bytes()?;
+            json!({
+                ANTIGRAVITY_STATE_FIELD: BASE64_STANDARD.encode(bytes)
+            })
+        }
         // OpenCode and OpenClaw use additive mode and are handled by early return above
         AppType::OpenCode | AppType::OpenClaw => {
             unreachable!("additive mode apps are handled by early return")
@@ -1100,6 +1156,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             AppType::Gemini if is_gemini_oauth_official_settings(&provider.settings_config) => {
                 "official"
             }
+            AppType::Antigravity => "official",
             _ => "custom",
         }
         .to_string(),

@@ -116,6 +116,10 @@ impl McpService {
             AppType::Gemini => {
                 mcp::sync_single_server_to_gemini(&Default::default(), &server.id, &server.server)?;
             }
+            AppType::Antigravity => {
+                // Antigravity does not support MCP
+                log::debug!("Antigravity does not support MCP, skipping sync");
+            }
             AppType::OpenCode => {
                 mcp::sync_single_server_to_opencode(
                     &Default::default(),
@@ -150,6 +154,10 @@ impl McpService {
             AppType::Claude => mcp::remove_server_from_claude(id)?,
             AppType::Codex => mcp::remove_server_from_codex(id)?,
             AppType::Gemini => mcp::remove_server_from_gemini(id)?,
+            AppType::Antigravity => {
+                // Antigravity does not support MCP
+                log::debug!("Antigravity does not support MCP, skipping remove");
+            }
             AppType::OpenCode => {
                 mcp::remove_server_from_opencode(id)?;
             }

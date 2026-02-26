@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, type ChangeEvent } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
@@ -127,6 +127,8 @@ const OFFICIAL_SWITCH_APPS: ReadonlySet<AppId> = new Set([
   "codex",
   "gemini",
 ]);
+const ANTIGRAVITY_STATE_FIELD = "stateVscdbBase64";
+const ANTIGRAVITY_CONFIG_FILE_NAME = "state.vscdb";
 
 function isOfficialSwitchEligibleCategory(category?: ProviderCategory) {
   return (
@@ -174,6 +176,33 @@ function extractClaudeCredentialsFromInitialData(initialData?: {
   return undefined;
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+}
+
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    return "0 B";
+  }
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  const kb = bytes / 1024;
+  if (kb < 1024) {
+    return `${kb.toFixed(1)} KB`;
+  }
+  return `${(kb / 1024).toFixed(2)} MB`;
+}
+
 export function ProviderForm({
   appId,
   providerId,
@@ -187,9 +216,10 @@ export function ProviderForm({
 }: ProviderFormProps) {
   const { t } = useTranslation();
   const isEditMode = Boolean(initialData);
+  const isAntigravityApp = appId === "antigravity";
 
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
-    initialData ? null : "custom",
+    initialData || isAntigravityApp ? null : "custom",
   );
   const [activePreset, setActivePreset] = useState<{
     id: string;
@@ -232,6 +262,19 @@ export function ProviderForm({
     ),
   }));
 
+  const initialAntigravityBase64 = useMemo(() => {
+    if (!isAntigravityApp) {
+      return "";
+    }
+    const raw = initialData?.settingsConfig?.[ANTIGRAVITY_STATE_FIELD];
+    return typeof raw === "string" ? raw : "";
+  }, [isAntigravityApp, initialData?.settingsConfig]);
+  const [antigravityStateBase64, setAntigravityStateBase64] = useState(
+    initialAntigravityBase64,
+  );
+  const [antigravityFileName, setAntigravityFileName] = useState<string>("");
+  const [antigravityFileSize, setAntigravityFileSize] = useState<number>(0);
+
   const { category } = useProviderCategory({
     appId,
     selectedPresetId,
@@ -253,6 +296,9 @@ export function ProviderForm({
   }, [shouldShowOfficialApiSwitch, category]);
 
   const effectiveCategory = useMemo<ProviderCategory | undefined>(() => {
+    if (isAntigravityApp) {
+      return "official";
+    }
     if (!shouldShowOfficialApiSwitch) {
       return category;
     }
@@ -263,7 +309,7 @@ export function ProviderForm({
       return "custom";
     }
     return category;
-  }, [shouldShowOfficialApiSwitch, officialApiEnabled, category]);
+  }, [isAntigravityApp, shouldShowOfficialApiSwitch, officialApiEnabled, category]);
 
   const isOmoCategory = appId === "opencode" && category === "omo";
   const isOmoSlimCategory = appId === "opencode" && category === "omo-slim";
@@ -277,7 +323,7 @@ export function ProviderForm({
     : queriedStandardOmoGlobalConfig;
 
   useEffect(() => {
-    setSelectedPresetId(initialData ? null : "custom");
+    setSelectedPresetId(initialData || isAntigravityApp ? null : "custom");
     setActivePreset(null);
 
     if (!initialData) {
@@ -295,7 +341,10 @@ export function ProviderForm({
         initialData?.meta?.pricingModelSource,
       ),
     });
-  }, [appId, initialData]);
+    setAntigravityStateBase64(initialAntigravityBase64);
+    setAntigravityFileName("");
+    setAntigravityFileSize(0);
+  }, [appId, initialData, isAntigravityApp, initialAntigravityBase64]);
 
   const initialClaudeCredentialsEditorValue = useMemo(() => {
     if (appId !== "claude") {
@@ -328,6 +377,8 @@ export function ProviderForm({
           ? CODEX_DEFAULT_CONFIG
           : appId === "gemini"
             ? GEMINI_DEFAULT_CONFIG
+            : appId === "antigravity"
+              ? JSON.stringify({ [ANTIGRAVITY_STATE_FIELD]: "" }, null, 2)
             : appId === "opencode"
               ? OPENCODE_DEFAULT_CONFIG
               : appId === "openclaw"
@@ -465,6 +516,16 @@ export function ProviderForm({
     form.reset(defaultValues);
   }, [defaultValues, form]);
 
+  useEffect(() => {
+    if (!isAntigravityApp) {
+      return;
+    }
+    const payload = {
+      [ANTIGRAVITY_STATE_FIELD]: antigravityStateBase64 || "",
+    };
+    form.setValue("settingsConfig", JSON.stringify(payload, null, 2));
+  }, [form, isAntigravityApp, antigravityStateBase64]);
+
   const presetCategoryLabels: Record<string, string> = useMemo(
     () => ({
       official: t("providerForm.categoryOfficial", {
@@ -485,6 +546,9 @@ export function ProviderForm({
   );
 
   const presetEntries = useMemo(() => {
+    if (appId === "antigravity") {
+      return [];
+    }
     if (appId === "codex") {
       return codexProviderPresets.map<PresetEntry>((preset, index) => ({
         id: `codex-${index}`,
@@ -765,10 +829,23 @@ export function ProviderForm({
       }
     }
 
-    let settingsConfig: string;
+    if (isAntigravityApp && !antigravityStateBase64.trim()) {
+      toast.error(
+        t("providerForm.antigravityConfigFileRequired", {
+          defaultValue: "Please upload state.vscdb before saving",
+        }),
+      );
+      return;
+    }
+
+    let settingsConfig = values.settingsConfig.trim();
     let claudeCredentialsForMeta: Record<string, unknown> | undefined;
 
-    if (appId === "claude") {
+    if (isAntigravityApp) {
+      settingsConfig = JSON.stringify({
+        [ANTIGRAVITY_STATE_FIELD]: antigravityStateBase64,
+      });
+    } else if (appId === "claude") {
       const trimmedCredentials = claudeCredentialsConfig.trim();
       if (trimmedCredentials) {
         try {
@@ -802,7 +879,9 @@ export function ProviderForm({
       }
     }
 
-    if (appId === "codex") {
+    if (isAntigravityApp) {
+      // already assembled above
+    } else if (appId === "codex") {
       try {
         const authJson = JSON.parse(codexAuth);
         const configObj = {
@@ -934,6 +1013,10 @@ export function ProviderForm({
       payload.presetCategory = category;
     }
 
+    if (isAntigravityApp) {
+      payload.presetCategory = "official";
+    }
+
     if (activePreset) {
       payload.presetId = activePreset.id;
       if (activePreset.category) {
@@ -999,29 +1082,33 @@ export function ProviderForm({
 
     const baseMeta: ProviderMeta | undefined =
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
-    payload.meta = {
-      ...(baseMeta ?? {}),
-      endpointAutoSelect,
-      testConfig: testConfig.enabled ? testConfig : undefined,
-      proxyConfig: proxyConfig.enabled ? proxyConfig : undefined,
-      costMultiplier: pricingConfig.enabled
-        ? pricingConfig.costMultiplier
-        : undefined,
-      pricingModelSource:
-        pricingConfig.enabled && pricingConfig.pricingModelSource !== "inherit"
-          ? pricingConfig.pricingModelSource
+    if (isAntigravityApp) {
+      payload.meta = undefined;
+    } else {
+      payload.meta = {
+        ...(baseMeta ?? {}),
+        endpointAutoSelect,
+        testConfig: testConfig.enabled ? testConfig : undefined,
+        proxyConfig: proxyConfig.enabled ? proxyConfig : undefined,
+        costMultiplier: pricingConfig.enabled
+          ? pricingConfig.costMultiplier
           : undefined,
-      apiFormat:
-        appId === "claude" && effectiveCategory !== "official"
-          ? localApiFormat
-          : undefined,
-      apiKeyField:
-        appId === "claude" && effectiveCategory !== "official"
-          ? localApiKeyField
-          : undefined,
-      claudeCredentials:
-        appId === "claude" ? claudeCredentialsForMeta : undefined,
-    };
+        pricingModelSource:
+          pricingConfig.enabled && pricingConfig.pricingModelSource !== "inherit"
+            ? pricingConfig.pricingModelSource
+            : undefined,
+        apiFormat:
+          appId === "claude" && effectiveCategory !== "official"
+            ? localApiFormat
+            : undefined,
+        apiKeyField:
+          appId === "claude" && effectiveCategory !== "official"
+            ? localApiKeyField
+            : undefined,
+        claudeCredentials:
+          appId === "claude" ? claudeCredentialsForMeta : undefined,
+      };
+    }
 
     if (isOfficialSwitchControlled && payload.meta) {
       const {
@@ -1130,6 +1217,40 @@ export function ProviderForm({
     codexBaseUrl,
     initialData,
   });
+
+  const handleAntigravityFileChange = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      if (
+        file.name.toLowerCase() !== ANTIGRAVITY_CONFIG_FILE_NAME.toLowerCase()
+      ) {
+        toast.error(
+          t("providerForm.antigravityConfigFileInvalid", {
+            defaultValue: "Please select the state.vscdb file",
+          }),
+        );
+        event.target.value = "";
+        return;
+      }
+
+      try {
+        const bytes = await file.arrayBuffer();
+        setAntigravityStateBase64(arrayBufferToBase64(bytes));
+        setAntigravityFileName(file.name);
+        setAntigravityFileSize(file.size);
+      } catch (error) {
+        console.error("[ProviderForm] Failed to read Antigravity config file", error);
+        toast.error(
+          t("providerForm.antigravityConfigFileReadFailed", {
+            defaultValue: "Failed to read state.vscdb file",
+          }),
+        );
+      }
+    },
+    [t],
+  );
 
   const handlePresetChange = (value: string) => {
     setSelectedPresetId(value);
@@ -1307,7 +1428,7 @@ export function ProviderForm({
         onSubmit={form.handleSubmit(handleSubmit)}
         className="space-y-6 glass rounded-xl p-6 border border-white/10"
       >
-        {!initialData && (
+        {!initialData && !isAntigravityApp && (
           <ProviderPresetSelector
             selectedPresetId={selectedPresetId}
             groupedPresets={groupedPresets}
@@ -1724,6 +1845,49 @@ export function ProviderForm({
               )}
             />
           </>
+        ) : appId === "antigravity" ? (
+          <div className="space-y-2">
+            <Label htmlFor="antigravity-config-file">
+              {t("providerForm.antigravityConfigFileLabel", {
+                defaultValue: "state.vscdb (upload)",
+              })}
+              <span className="text-destructive ml-1">*</span>
+            </Label>
+            <Input
+              id="antigravity-config-file"
+              type="file"
+              accept=".vscdb"
+              onChange={handleAntigravityFileChange}
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("providerForm.antigravityConfigFileHint", {
+                defaultValue:
+                  "Upload the binary state.vscdb file from Antigravity User/globalStorage.",
+              })}
+            </p>
+            {antigravityFileName ? (
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.antigravityConfigFileSelected", {
+                  defaultValue: "Selected: {{name}} ({{size}})",
+                  name: antigravityFileName,
+                  size: formatFileSize(antigravityFileSize),
+                })}
+              </p>
+            ) : antigravityStateBase64 ? (
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.antigravityConfigFileExisting", {
+                  defaultValue:
+                    "Configuration file already loaded from this provider.",
+                })}
+              </p>
+            ) : null}
+            <div className="rounded-lg border border-border-default bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+              {t("providerForm.antigravityConfigManaged", {
+                defaultValue:
+                  "state.vscdb is managed through the upload field above. JSON editing is disabled for this app.",
+              })}
+            </div>
+          </div>
         ) : (
           <>
             <div className="space-y-4">
@@ -1795,7 +1959,10 @@ export function ProviderForm({
           </>
         )}
 
-        {!isAnyOmoCategory && appId !== "opencode" && appId !== "openclaw" && (
+        {!isAnyOmoCategory &&
+          appId !== "opencode" &&
+          appId !== "openclaw" &&
+          appId !== "antigravity" && (
           <ProviderAdvancedConfig
             testConfig={testConfig}
             proxyConfig={proxyConfig}

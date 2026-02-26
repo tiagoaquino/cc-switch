@@ -57,6 +57,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
       createdAt: Date.now(),
     },
   },
+  antigravity: {},
   opencode: {},
   openclaw: {},
 });
@@ -65,6 +66,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   claude: "claude-1",
   codex: "codex-1",
   gemini: "gemini-1",
+  antigravity: "",
   opencode: "",
   openclaw: "",
 });
@@ -106,6 +108,7 @@ let mcpConfigs: McpConfigState = {
     },
   },
   gemini: {},
+  antigravity: {},
   opencode: {},
   openclaw: {},
 };
@@ -151,6 +154,7 @@ export const resetProviderState = () => {
       },
     },
     gemini: {},
+    antigravity: {},
     opencode: {},
     openclaw: {},
   };

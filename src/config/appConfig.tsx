@@ -7,6 +7,7 @@ import {
   OpenClawIcon,
 } from "@/components/BrandIcons";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import AntigravityLogo from "@/assets/icons/antigravity-logo.png";
 
 export interface AppConfig {
   label: string;
@@ -19,17 +20,18 @@ export const APP_IDS: AppId[] = [
   "claude",
   "codex",
   "gemini",
+  "antigravity",
   "opencode",
   "openclaw",
 ];
 
 /** App IDs shown in MCP & Skills panels (excludes OpenClaw) */
-export const MCP_SKILLS_APP_IDS: AppId[] = [
+export const MCP_SKILLS_APP_IDS = [
   "claude",
   "codex",
   "gemini",
   "opencode",
-];
+] as const satisfies readonly AppId[];
 
 export const APP_ICON_MAP: Record<AppId, AppConfig> = {
   claude: {
@@ -55,6 +57,22 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-blue-500/10 ring-1 ring-blue-500/20 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400",
     badgeClass:
       "bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20 border-0 gap-1.5",
+  },
+  antigravity: {
+    label: "Google Antigravity",
+    icon: (
+      <img
+        src={AntigravityLogo}
+        width={14}
+        height={14}
+        alt="Google Antigravity"
+        loading="lazy"
+      />
+    ),
+    activeClass:
+      "bg-amber-500/10 ring-1 ring-amber-500/20 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300",
+    badgeClass:
+      "bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 border-0 gap-1.5",
   },
   opencode: {
     label: "OpenCode",

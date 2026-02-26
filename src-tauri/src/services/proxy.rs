@@ -381,6 +381,10 @@ impl ProxyService {
                 // OpenClaw doesn't support proxy features
                 return Err("OpenClaw 不支持代理功能".to_string());
             }
+            AppType::Antigravity => {
+                // Antigravity doesn't support proxy features
+                return Err("Antigravity 不支持代理功能".to_string());
+            }
         };
 
         self.sync_live_config_to_provider(app_type, &live_config)
@@ -600,6 +604,9 @@ impl ProxyService {
             AppType::OpenClaw => {
                 // OpenClaw doesn't support proxy features, skip silently
             }
+            AppType::Antigravity => {
+                // Antigravity doesn't support proxy features, skip silently
+            }
         }
 
         Ok(())
@@ -785,6 +792,10 @@ impl ProxyService {
             AppType::OpenClaw => {
                 // OpenClaw doesn't support proxy features
                 return Err("OpenClaw 不支持代理功能".to_string());
+            }
+            AppType::Antigravity => {
+                // Antigravity doesn't support proxy features
+                return Err("Antigravity 不支持代理功能".to_string());
             }
         };
 
@@ -1002,6 +1013,10 @@ impl ProxyService {
                 // OpenClaw doesn't support proxy features
                 return Err("OpenClaw 不支持代理功能".to_string());
             }
+            AppType::Antigravity => {
+                // Antigravity doesn't support proxy features
+                return Err("Antigravity 不支持代理功能".to_string());
+            }
         }
 
         Ok(())
@@ -1091,6 +1106,9 @@ impl ProxyService {
             AppType::OpenClaw => {
                 // OpenClaw doesn't support proxy features, skip silently
             }
+            AppType::Antigravity => {
+                // Antigravity doesn't support proxy features, skip silently
+            }
         }
 
         Ok(())
@@ -1128,6 +1146,9 @@ impl ProxyService {
             }
             AppType::OpenClaw => {
                 // OpenClaw doesn't support proxy features, skip silently
+            }
+            AppType::Antigravity => {
+                // Antigravity doesn't support proxy features, skip silently
             }
         }
 
@@ -1216,6 +1237,10 @@ impl ProxyService {
                 // OpenClaw doesn't support proxy features
                 Err("OpenClaw 不支持代理功能".to_string())
             }
+            AppType::Antigravity => {
+                // Antigravity doesn't support proxy features
+                Err("Antigravity 不支持代理功能".to_string())
+            }
         }
     }
 
@@ -1239,6 +1264,10 @@ impl ProxyService {
             }
             AppType::OpenClaw => {
                 // OpenClaw doesn't support proxy takeover
+                false
+            }
+            AppType::Antigravity => {
+                // Antigravity doesn't support proxy takeover
                 false
             }
         }
@@ -1286,6 +1315,10 @@ impl ProxyService {
             }
             AppType::OpenClaw => {
                 // OpenClaw doesn't support proxy features
+                Ok(())
+            }
+            AppType::Antigravity => {
+                // Antigravity doesn't support proxy features
                 Ok(())
             }
         }

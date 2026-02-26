@@ -5,6 +5,7 @@ import { ProviderIcon } from "@/components/ProviderIcon";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import type { VisibleApps } from "@/types";
 import type { AppId } from "@/lib/api";
+import AntigravityLogo from "@/assets/icons/antigravity-logo.png";
 
 interface AppVisibilitySettingsProps {
   settings: SettingsFormState;
@@ -14,11 +15,18 @@ interface AppVisibilitySettingsProps {
 const APP_CONFIG: Array<{
   id: AppId;
   icon: string;
+  iconSrc?: string;
   nameKey: string;
 }> = [
   { id: "claude", icon: "claude", nameKey: "apps.claude" },
   { id: "codex", icon: "openai", nameKey: "apps.codex" },
   { id: "gemini", icon: "gemini", nameKey: "apps.gemini" },
+  {
+    id: "antigravity",
+    icon: "",
+    iconSrc: AntigravityLogo,
+    nameKey: "apps.antigravity",
+  },
   { id: "opencode", icon: "opencode", nameKey: "apps.opencode" },
   { id: "openclaw", icon: "openclaw", nameKey: "apps.openclaw" },
 ];
@@ -33,6 +41,7 @@ export function AppVisibilitySettings({
     claude: true,
     codex: true,
     gemini: true,
+    antigravity: true,
     opencode: true,
     openclaw: true,
   };
@@ -76,6 +85,7 @@ export function AppVisibilitySettings({
               disabled={isDisabled}
               onClick={() => handleToggle(app.id)}
               icon={app.icon}
+              iconSrc={app.iconSrc}
               name={t(app.nameKey)}
             >
               {t(app.nameKey)}
@@ -92,6 +102,7 @@ interface AppButtonProps {
   disabled?: boolean;
   onClick: () => void;
   icon: string;
+  iconSrc?: string;
   name: string;
   children: React.ReactNode;
 }
@@ -101,6 +112,7 @@ function AppButton({
   disabled,
   onClick,
   icon,
+  iconSrc,
   name,
   children,
 }: AppButtonProps) {
@@ -118,7 +130,11 @@ function AppButton({
           : "text-muted-foreground hover:text-foreground hover:bg-muted",
       )}
     >
-      <ProviderIcon icon={icon} name={name} size={14} />
+      {iconSrc ? (
+        <img src={iconSrc} width={14} height={14} alt={name} loading="lazy" />
+      ) : (
+        <ProviderIcon icon={icon} name={name} size={14} />
+      )}
       {children}
     </Button>
   );
