@@ -59,13 +59,13 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20 border-0 gap-1.5",
   },
   antigravity: {
-    label: "Google Antigravity",
+    label: "Antigravity",
     icon: (
       <img
         src={AntigravityLogo}
         width={14}
         height={14}
-        alt="Google Antigravity"
+        alt="Antigravity"
         loading="lazy"
       />
     ),

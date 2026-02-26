@@ -45,7 +45,7 @@ export function AppSwitcher({
     claude: "Claude",
     codex: "Codex",
     gemini: "Gemini",
-    antigravity: "Google Antigravity",
+    antigravity: "Antigravity",
     opencode: "OpenCode",
     openclaw: "OpenClaw",
   };
