@@ -94,11 +94,11 @@ import { buildGeminiSettingsConfig } from "./helpers/geminiSettings";
 type PresetEntry = {
   id: string;
   preset:
-    | ProviderPreset
-    | CodexProviderPreset
-    | GeminiProviderPreset
-    | OpenCodeProviderPreset
-    | OpenClawProviderPreset;
+  | ProviderPreset
+  | CodexProviderPreset
+  | GeminiProviderPreset
+  | OpenCodeProviderPreset
+  | OpenClawProviderPreset;
 };
 
 interface ProviderFormProps {
@@ -173,6 +173,20 @@ function extractClaudeCredentialsFromInitialData(initialData?: {
     return legacyCredentials as Record<string, unknown>;
   }
 
+  return undefined;
+}
+
+function extractClaudeMcpConfigFromInitialData(initialData?: {
+  meta?: ProviderMeta;
+}): Record<string, unknown> | undefined {
+  const mcpConfig = initialData?.meta?.claudeMcpConfig;
+  if (
+    mcpConfig &&
+    typeof mcpConfig === "object" &&
+    !Array.isArray(mcpConfig)
+  ) {
+    return mcpConfig as Record<string, unknown>;
+  }
   return undefined;
 }
 
@@ -361,6 +375,21 @@ export function ProviderForm({
     setClaudeCredentialsConfig(initialClaudeCredentialsEditorValue);
   }, [initialClaudeCredentialsEditorValue]);
 
+  const initialClaudeMcpConfigEditorValue = useMemo(() => {
+    if (appId !== "claude") {
+      return "";
+    }
+    const mcpConfig = extractClaudeMcpConfigFromInitialData(initialData);
+    return mcpConfig ? JSON.stringify(mcpConfig, null, 2) : "";
+  }, [appId, initialData]);
+
+  const [claudeMcpConfig, setClaudeMcpConfig] =
+    useState<string>(initialClaudeMcpConfigEditorValue);
+
+  useEffect(() => {
+    setClaudeMcpConfig(initialClaudeMcpConfigEditorValue);
+  }, [initialClaudeMcpConfigEditorValue]);
+
   const initialSettingsConfigForForm = useMemo(
     () => sanitizeClaudeSettingsForEditor(appId, initialData?.settingsConfig),
     [appId, initialData?.settingsConfig],
@@ -379,11 +408,11 @@ export function ProviderForm({
             ? GEMINI_DEFAULT_CONFIG
             : appId === "antigravity"
               ? JSON.stringify({ [ANTIGRAVITY_STATE_FIELD]: "" }, null, 2)
-            : appId === "opencode"
-              ? OPENCODE_DEFAULT_CONFIG
-              : appId === "openclaw"
-                ? OPENCLAW_DEFAULT_CONFIG
-                : CLAUDE_DEFAULT_CONFIG,
+              : appId === "opencode"
+                ? OPENCODE_DEFAULT_CONFIG
+                : appId === "openclaw"
+                  ? OPENCLAW_DEFAULT_CONFIG
+                  : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
@@ -414,10 +443,10 @@ export function ProviderForm({
         if (
           config?.env &&
           (config.env as Record<string, unknown>).ANTHROPIC_API_KEY !==
-            undefined
+          undefined
         )
           return "ANTHROPIC_API_KEY";
-      } catch {}
+      } catch { }
       return "ANTHROPIC_AUTH_TOKEN";
     },
   );
@@ -440,7 +469,7 @@ export function ProviderForm({
           config.env = env;
           form.setValue("settingsConfig", JSON.stringify(config, null, 2));
         }
-      } catch {}
+      } catch { }
     },
     [form],
   );
@@ -464,7 +493,7 @@ export function ProviderForm({
     settingsConfig: form.getValues("settingsConfig"),
     codexConfig: "",
     onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
-    onCodexConfigChange: () => {},
+    onCodexConfigChange: () => { },
   });
 
   const {
@@ -630,7 +659,7 @@ export function ProviderForm({
         }
         config.env[key] = value;
         form.setValue("settingsConfig", JSON.stringify(config, null, 2));
-      } catch {}
+      } catch { }
     },
     [form],
   );
@@ -681,7 +710,7 @@ export function ProviderForm({
 
   const initialOmoSettings =
     appId === "opencode" &&
-    (initialData?.category === "omo" || initialData?.category === "omo-slim")
+      (initialData?.category === "omo" || initialData?.category === "omo-slim")
       ? (initialData.settingsConfig as Record<string, unknown> | undefined)
       : undefined;
 
@@ -840,6 +869,7 @@ export function ProviderForm({
 
     let settingsConfig = values.settingsConfig.trim();
     let claudeCredentialsForMeta: Record<string, unknown> | undefined;
+    let claudeMcpConfigForMeta: Record<string, unknown> | undefined;
 
     if (isAntigravityApp) {
       settingsConfig = JSON.stringify({
@@ -872,6 +902,38 @@ export function ProviderForm({
             t("claudeConfig.credentialsInvalidJson", {
               defaultValue:
                 "Invalid .credentials.json JSON format, please check syntax",
+            }),
+          );
+          return;
+        }
+      }
+
+      const trimmedMcpConfig = claudeMcpConfig.trim();
+      if (trimmedMcpConfig) {
+        try {
+          const parsedMcpConfig = JSON.parse(trimmedMcpConfig);
+          if (
+            !parsedMcpConfig ||
+            typeof parsedMcpConfig !== "object" ||
+            Array.isArray(parsedMcpConfig)
+          ) {
+            toast.error(
+              t("claudeConfig.mcpConfigMustBeObject", {
+                defaultValue:
+                  "~/.claude.json must be a JSON object (not array/null)",
+              }),
+            );
+            return;
+          }
+          claudeMcpConfigForMeta = parsedMcpConfig as Record<
+            string,
+            unknown
+          >;
+        } catch {
+          toast.error(
+            t("claudeConfig.mcpConfigInvalidJson", {
+              defaultValue:
+                "Invalid ~/.claude.json JSON format, please check syntax",
             }),
           );
           return;
@@ -1107,6 +1169,8 @@ export function ProviderForm({
             : undefined,
         claudeCredentials:
           appId === "claude" ? claudeCredentialsForMeta : undefined,
+        claudeMcpConfig:
+          appId === "claude" ? claudeMcpConfigForMeta : undefined,
       };
     }
 
@@ -1259,6 +1323,7 @@ export function ProviderForm({
       form.reset(defaultValues);
       if (appId === "claude") {
         setClaudeCredentialsConfig("");
+        setClaudeMcpConfig("");
       }
 
       if (appId === "codex") {
@@ -1407,6 +1472,7 @@ export function ProviderForm({
       iconColor: preset.iconColor ?? "",
     });
     setClaudeCredentialsConfig("");
+    setClaudeMcpConfig("");
   };
 
   const settingsConfigErrorField = (
@@ -1465,10 +1531,10 @@ export function ProviderForm({
                       opencodeForm.opencodeProviderKey,
                     ) &&
                       !isEditMode) ||
-                    (opencodeForm.opencodeProviderKey.trim() !== "" &&
-                      !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
-                        opencodeForm.opencodeProviderKey,
-                      ))
+                      (opencodeForm.opencodeProviderKey.trim() !== "" &&
+                        !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                          opencodeForm.opencodeProviderKey,
+                        ))
                       ? "border-destructive"
                       : ""
                   }
@@ -1524,10 +1590,10 @@ export function ProviderForm({
                       openclawForm.openclawProviderKey,
                     ) &&
                       !isEditMode) ||
-                    (openclawForm.openclawProviderKey.trim() !== "" &&
-                      !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
-                        openclawForm.openclawProviderKey,
-                      ))
+                      (openclawForm.openclawProviderKey.trim() !== "" &&
+                        !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                          openclawForm.openclawProviderKey,
+                        ))
                       ? "border-destructive"
                       : ""
                   }
@@ -1954,6 +2020,36 @@ export function ProviderForm({
                   })}
                 </p>
               </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="claudeMcpConfig">
+                  {t("claudeConfig.mcpConfigLabel", {
+                    defaultValue: "Claude ~/.claude.json (JSON)",
+                  })}
+                </Label>
+                <JsonEditor
+                  value={claudeMcpConfig}
+                  onChange={setClaudeMcpConfig}
+                  placeholder={`{
+  "mcpServers": {
+    "my-server": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["@my/mcp-server"]
+    }
+  }
+}`}
+                  rows={10}
+                  showValidation={true}
+                  language="json"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("claudeConfig.mcpConfigHint", {
+                    defaultValue:
+                      "Optional ~/.claude.json snapshot. Leave empty to remove the file.",
+                  })}
+                </p>
+              </div>
             </div>
             {settingsConfigErrorField}
           </>
@@ -1963,15 +2059,15 @@ export function ProviderForm({
           appId !== "opencode" &&
           appId !== "openclaw" &&
           appId !== "antigravity" && (
-          <ProviderAdvancedConfig
-            testConfig={testConfig}
-            proxyConfig={proxyConfig}
-            pricingConfig={pricingConfig}
-            onTestConfigChange={setTestConfig}
-            onProxyConfigChange={setProxyConfig}
-            onPricingConfigChange={setPricingConfig}
-          />
-        )}
+            <ProviderAdvancedConfig
+              testConfig={testConfig}
+              proxyConfig={proxyConfig}
+              pricingConfig={pricingConfig}
+              onTestConfigChange={setTestConfig}
+              onProxyConfigChange={setProxyConfig}
+              onPricingConfigChange={setPricingConfig}
+            />
+          )}
 
         {showButtons && (
           <div className="flex justify-end gap-2">

@@ -100,6 +100,47 @@ fn apply_claude_credentials_for_provider(provider: &Provider) -> Result<(), AppE
     Ok(())
 }
 
+/// Read the complete ~/.claude.json (MCP config) from live disk.
+/// Returns Ok(None) if the file does not exist.
+fn read_claude_mcp_from_live() -> Result<Option<Value>, AppError> {
+    let mcp_path = get_claude_mcp_path();
+    if !mcp_path.exists() {
+        return Ok(None);
+    }
+
+    let mcp_config: Value = read_json_file(&mcp_path)?;
+    if !mcp_config.is_object() {
+        return Err(AppError::localized(
+            "claude.mcp_config.invalid_type",
+            format!(
+                "Claude MCP 配置文件格式错误: {} 必须是 JSON 对象",
+                mcp_path.display()
+            ),
+            format!(
+                "Claude MCP config file format invalid: {} must be a JSON object",
+                mcp_path.display()
+            ),
+        ));
+    }
+
+    Ok(Some(mcp_config))
+}
+
+/// Recreate ~/.claude.json entirely from the provider's persisted snapshot.
+/// If the provider has no MCP config stored, the file is deleted.
+fn apply_claude_mcp_for_provider(provider: &Provider) -> Result<(), AppError> {
+    let mcp_path = get_claude_mcp_path();
+    let mcp_config = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.claude_mcp_config.as_ref());
+    match mcp_config {
+        Some(value) => write_json_file(&mcp_path, value)?,
+        None => delete_file(&mcp_path)?,
+    }
+    Ok(())
+}
+
 fn decode_antigravity_state_from_provider(provider: &Provider) -> Result<Vec<u8>, AppError> {
     let obj = provider.settings_config.as_object().ok_or_else(|| {
         AppError::localized(
@@ -264,6 +305,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             let settings = sanitize_claude_settings_for_live(&provider.settings_config);
             write_json_file(&path, &settings)?;
             apply_claude_credentials_for_provider(provider)?;
+            apply_claude_mcp_for_provider(provider)?;
         }
         AppType::Codex => {
             let obj = provider
@@ -578,6 +620,7 @@ fn write_claude_live_partial(provider: &Provider) -> Result<(), AppError> {
     let settings = sanitize_claude_settings_for_live(&live);
     write_json_file(&path, &settings)?;
     apply_claude_credentials_for_provider(provider)?;
+    apply_claude_mcp_for_provider(provider)?;
     Ok(())
 }
 
@@ -786,6 +829,24 @@ pub(crate) fn backfill_claude_meta_fields(provider: &mut Provider, live: &Value)
         }
         Some(_) => {
             log::warn!("Skip Claude credentials backfill: live credentials is not a JSON object");
+        }
+    }
+
+    // ~/.claude.json: read directly from disk (independent sidecar)
+    match read_claude_mcp_from_live() {
+        Ok(Some(mcp_config)) => {
+            let meta = provider
+                .meta
+                .get_or_insert_with(crate::provider::ProviderMeta::default);
+            meta.claude_mcp_config = Some(mcp_config);
+        }
+        Ok(None) => {
+            if let Some(meta) = provider.meta.as_mut() {
+                meta.claude_mcp_config = None;
+            }
+        }
+        Err(e) => {
+            log::warn!("Skip Claude MCP config backfill: {e}");
         }
     }
 }
@@ -1049,6 +1110,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     let providers = state.db.get_all_providers(app_type.as_str())?;
 
     let mut imported_claude_credentials: Option<Value> = None;
+    let mut imported_claude_mcp_config: Option<Value> = None;
 
     let settings_config = match app_type {
         AppType::Codex => {
@@ -1066,16 +1128,15 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         }
         AppType::Claude => {
             let settings_path = get_claude_settings_path();
-            if !settings_path.exists() {
-                return Err(AppError::localized(
-                    "claude.live.missing",
-                    "Claude Code 配置文件不存在",
-                    "Claude settings file is missing",
-                ));
-            }
-            let mut v = read_json_file::<Value>(&settings_path)?;
-            let _ = normalize_claude_models_in_value(&mut v);
+            let v = if settings_path.exists() {
+                let mut val = read_json_file::<Value>(&settings_path)?;
+                let _ = normalize_claude_models_in_value(&mut val);
+                val
+            } else {
+                json!({})
+            };
             imported_claude_credentials = read_claude_credentials_from_live()?;
+            imported_claude_mcp_config = read_claude_mcp_from_live()?;
             v
         }
         AppType::Gemini => {
@@ -1149,6 +1210,12 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 .meta
                 .get_or_insert_with(crate::provider::ProviderMeta::default);
             meta.claude_credentials = Some(credentials);
+        }
+        if let Some(mcp_config) = imported_claude_mcp_config {
+            let meta = provider
+                .meta
+                .get_or_insert_with(crate::provider::ProviderMeta::default);
+            meta.claude_mcp_config = Some(mcp_config);
         }
     }
     provider.category = Some(

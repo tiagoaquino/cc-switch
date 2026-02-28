@@ -369,7 +369,7 @@ fn import_default_config_repeated_calls_generate_unique_imported_ids() {
 }
 
 #[test]
-fn import_default_config_without_live_file_returns_error() {
+fn import_default_config_without_live_file_imports_empty_settings() {
     use support::create_test_state;
 
     let _guard = test_mutex().lock().expect("acquire test mutex");
@@ -378,29 +378,21 @@ fn import_default_config_without_live_file_returns_error() {
 
     let state = create_test_state().expect("create test state");
 
-    let err = import_default_config_test_hook(&state, AppType::Claude)
-        .expect_err("missing live file should error");
-    match err {
-        AppError::Localized { zh, .. } => assert!(
-            zh.contains("Claude Code 配置文件不存在"),
-            "unexpected error message: {zh}"
-        ),
-        AppError::Message(msg) => assert!(
-            msg.contains("Claude Code 配置文件不存在"),
-            "unexpected error message: {msg}"
-        ),
-        other => panic!("unexpected error variant: {other:?}"),
-    }
+    // When settings.json is missing, import should succeed with empty settings
+    let imported = import_default_config_test_hook(&state, AppType::Claude)
+        .expect("import without settings.json should succeed with empty settings");
+    assert!(imported, "import should return true");
 
-    // 使用数据库架构，不再检查 config.json
-    // 失败的导入不应该向数据库写入任何供应商
     let providers = state
         .db
         .get_all_providers(AppType::Claude.as_str())
         .expect("get all providers");
-    assert!(
-        providers.is_empty(),
-        "failed import should not create any providers in database"
+    assert_eq!(providers.len(), 1, "should create one provider");
+    let provider = providers.get("default").expect("default provider");
+    assert_eq!(
+        provider.settings_config,
+        serde_json::json!({}),
+        "provider should have empty settings config"
     );
 }
 

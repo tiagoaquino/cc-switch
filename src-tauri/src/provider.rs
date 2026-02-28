@@ -247,6 +247,13 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub claude_credentials: Option<Value>,
+    /// Claude MCP 配置完整快照（对应 ~/.claude.json 全文）
+    #[serde(
+        rename = "claudeMcpConfig",
+        alias = "claude_mcp_config",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claude_mcp_config: Option<Value>,
 }
 
 impl ProviderManager {

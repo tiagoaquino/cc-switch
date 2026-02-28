@@ -169,6 +169,8 @@ export interface ProviderMeta {
   apiKeyField?: "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
   // Claude OAuth 凭据 sidecar（对应 ~/.claude/.credentials.json）
   claudeCredentials?: Record<string, unknown> | null;
+  // Claude MCP 配置完整快照（对应 ~/.claude.json）
+  claudeMcpConfig?: Record<string, unknown> | null;
 }
 
 // Skill 同步方式
