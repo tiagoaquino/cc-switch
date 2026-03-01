@@ -305,6 +305,7 @@ export function ProviderActions({
             variant="ghost"
             onClick={onLogoutContext}
             title={t("provider.logoutContextTooltip", {
+              appName: t(`apps.${appId}`),
               defaultValue: "Logout app context",
             })}
             className={cn(
