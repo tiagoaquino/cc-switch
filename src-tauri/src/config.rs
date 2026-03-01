@@ -295,6 +295,14 @@ pub fn delete_file(path: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 删除目录及其全部内容
+pub fn delete_dir(path: &Path) -> Result<(), AppError> {
+    if path.exists() {
+        fs::remove_dir_all(path).map_err(|e| AppError::io(path, e))?;
+    }
+    Ok(())
+}
+
 /// 检查 Claude Code 配置状态
 #[derive(Serialize, Deserialize)]
 pub struct ConfigStatus {

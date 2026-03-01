@@ -11,8 +11,8 @@ use serde_json::{json, Value};
 use crate::app_config::AppType;
 use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
 use crate::config::{
-    delete_file, get_claude_config_dir, get_claude_credentials_path, get_claude_mcp_path,
-    get_claude_settings_path, read_json_file, write_json_file,
+    delete_dir, delete_file, get_claude_config_dir, get_claude_credentials_path,
+    get_claude_mcp_path, get_claude_settings_path, read_json_file, write_json_file,
 };
 use crate::error::AppError;
 use crate::provider::Provider;
@@ -178,6 +178,7 @@ pub(crate) fn reset_app_live_files(app_type: &AppType) -> Result<(), AppError> {
             delete_file(&claude_dir.join("claude.json"))?;
             delete_file(&get_claude_credentials_path())?;
             delete_file(&get_claude_mcp_path())?;
+            delete_dir(&claude_dir.join("backups"))?;
         }
         AppType::Codex => {
             delete_file(&get_codex_auth_path())?;
