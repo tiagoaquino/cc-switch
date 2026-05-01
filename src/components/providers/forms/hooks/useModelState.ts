@@ -35,9 +35,16 @@ function parseModelsFromConfig(settingsConfig: string) {
         ? env.ANTHROPIC_DEFAULT_OPUS_MODEL
         : model || small;
 
-    return { model, reasoning, haiku, sonnet, opus };
+    return { model, reasoning, smallFast: small, haiku, sonnet, opus };
   } catch {
-    return { model: "", reasoning: "", haiku: "", sonnet: "", opus: "" };
+    return {
+      model: "",
+      reasoning: "",
+      smallFast: "",
+      haiku: "",
+      sonnet: "",
+      opus: "",
+    };
   }
 }
 
@@ -55,6 +62,9 @@ export function useModelState({
   );
   const [reasoningModel, setReasoningModel] = useState(
     () => parseModelsFromConfig(settingsConfig).reasoning,
+  );
+  const [smallFastModel, setSmallFastModel] = useState(
+    () => parseModelsFromConfig(settingsConfig).smallFast,
   );
   const [defaultHaikuModel, setDefaultHaikuModel] = useState(
     () => parseModelsFromConfig(settingsConfig).haiku,
@@ -115,6 +125,7 @@ export function useModelState({
 
       setClaudeModel(model || "");
       setReasoningModel(reasoning || "");
+      setSmallFastModel(small || "");
       setDefaultHaikuModel(haiku || "");
       setDefaultSonnetModel(sonnet || "");
       setDefaultOpusModel(opus || "");
@@ -128,6 +139,7 @@ export function useModelState({
       field:
         | "ANTHROPIC_MODEL"
         | "ANTHROPIC_REASONING_MODEL"
+        | "ANTHROPIC_SMALL_FAST_MODEL"
         | "ANTHROPIC_DEFAULT_HAIKU_MODEL"
         | "ANTHROPIC_DEFAULT_SONNET_MODEL"
         | "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -137,6 +149,7 @@ export function useModelState({
 
       if (field === "ANTHROPIC_MODEL") setClaudeModel(value);
       if (field === "ANTHROPIC_REASONING_MODEL") setReasoningModel(value);
+      if (field === "ANTHROPIC_SMALL_FAST_MODEL") setSmallFastModel(value);
       if (field === "ANTHROPIC_DEFAULT_HAIKU_MODEL")
         setDefaultHaikuModel(value);
       if (field === "ANTHROPIC_DEFAULT_SONNET_MODEL")
@@ -149,15 +162,12 @@ export function useModelState({
           : { env: {} };
         if (!currentConfig.env) currentConfig.env = {};
 
-        // 新键仅写入；旧键不再写入
         const trimmed = value.trim();
         if (trimmed) {
           currentConfig.env[field] = trimmed;
         } else {
           delete currentConfig.env[field];
         }
-        // 删除旧键
-        delete currentConfig.env["ANTHROPIC_SMALL_FAST_MODEL"];
 
         onConfigChange(JSON.stringify(currentConfig, null, 2));
       } catch (err) {
@@ -172,6 +182,8 @@ export function useModelState({
     setClaudeModel,
     reasoningModel,
     setReasoningModel,
+    smallFastModel,
+    setSmallFastModel,
     defaultHaikuModel,
     setDefaultHaikuModel,
     defaultSonnetModel,

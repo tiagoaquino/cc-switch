@@ -1278,7 +1278,7 @@ impl ProviderService {
 
 /// Normalize Claude model keys in a JSON value
 ///
-/// Reads old key (ANTHROPIC_SMALL_FAST_MODEL), writes new keys (DEFAULT_*), and deletes old key.
+/// Reads model keys and backfills DEFAULT_* keys when missing.
 pub(crate) fn normalize_claude_models_in_value(settings: &mut Value) -> bool {
     let mut changed = false;
     let env = match settings.get_mut("env").and_then(|v| v.as_object_mut()) {
@@ -1341,10 +1341,6 @@ pub(crate) fn normalize_claude_models_in_value(settings: &mut Value) -> bool {
             env.insert("ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(), Value::String(v));
             changed = true;
         }
-    }
-
-    if env.remove("ANTHROPIC_SMALL_FAST_MODEL").is_some() {
-        changed = true;
     }
 
     changed

@@ -673,7 +673,7 @@
     "fillApiKey": "Please fill in OPENAI_API_KEY",
     "visitWebsite": "Visit {{url}}",
     "anthropicModel": "Main Model",
-    "anthropicSmallFastModel": "Fast Model",
+    "anthropicSmallFastModel": "Small Fast Model",
     "anthropicReasoningModel": "Reasoning Model (Thinking)",
     "apiFormat": "API Format",
     "apiFormatHint": "Select the input format for the provider's API",

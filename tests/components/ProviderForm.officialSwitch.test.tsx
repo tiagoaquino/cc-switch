@@ -301,6 +301,97 @@ describe("ProviderForm official API switch", () => {
     expect(geminiSubmit.mock.calls[0][0].presetCategory).toBe("official");
   });
 
+  it("submits Claude Small Fast Model without removing it when other models change", async () => {
+    const onSubmit = vi.fn();
+
+    renderProviderForm({
+      appId: "claude",
+      initialCategory: "custom",
+      initialSettingsConfig: {
+        env: {
+          ANTHROPIC_AUTH_TOKEN: "sk-claude",
+          ANTHROPIC_BASE_URL: "https://claude.example",
+          ANTHROPIC_SMALL_FAST_MODEL: "claude-small-fast-test",
+          ANTHROPIC_MODEL: "claude-main-old",
+        },
+      },
+      onSubmit,
+    });
+
+    await waitFor(() => {
+      expect(document.querySelector("#claudeSmallFastModel")).toHaveValue(
+        "claude-small-fast-test",
+      );
+    });
+
+    fireEvent.change(document.querySelector("#claudeModel")!, {
+      target: { value: "claude-main-new" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const parsedSettings = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
+    expect(parsedSettings.env.ANTHROPIC_MODEL).toBe("claude-main-new");
+    expect(parsedSettings.env.ANTHROPIC_SMALL_FAST_MODEL).toBe(
+      "claude-small-fast-test",
+    );
+  });
+
+  it("updates and clears Claude Small Fast Model", async () => {
+    const updateSubmit = vi.fn();
+    const { unmount } = renderProviderForm({
+      appId: "claude",
+      initialCategory: "custom",
+      initialSettingsConfig: {
+        env: {
+          ANTHROPIC_AUTH_TOKEN: "sk-claude",
+          ANTHROPIC_BASE_URL: "https://claude.example",
+          ANTHROPIC_SMALL_FAST_MODEL: "claude-small-fast-test",
+          ANTHROPIC_MODEL: "claude-main",
+        },
+      },
+      onSubmit: updateSubmit,
+    });
+
+    fireEvent.change(document.querySelector("#claudeSmallFastModel")!, {
+      target: { value: "claude-small-fast-new" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+
+    await waitFor(() => expect(updateSubmit).toHaveBeenCalledTimes(1));
+    let parsedSettings = JSON.parse(updateSubmit.mock.calls[0][0].settingsConfig);
+    expect(parsedSettings.env.ANTHROPIC_SMALL_FAST_MODEL).toBe(
+      "claude-small-fast-new",
+    );
+
+    unmount();
+
+    const clearSubmit = vi.fn();
+    renderProviderForm({
+      appId: "claude",
+      initialCategory: "custom",
+      initialSettingsConfig: {
+        env: {
+          ANTHROPIC_AUTH_TOKEN: "sk-claude",
+          ANTHROPIC_BASE_URL: "https://claude.example",
+          ANTHROPIC_SMALL_FAST_MODEL: "claude-small-fast-test",
+          ANTHROPIC_MODEL: "claude-main",
+        },
+      },
+      onSubmit: clearSubmit,
+    });
+
+    fireEvent.change(document.querySelector("#claudeSmallFastModel")!, {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+
+    await waitFor(() => expect(clearSubmit).toHaveBeenCalledTimes(1));
+    parsedSettings = JSON.parse(clearSubmit.mock.calls[0][0].settingsConfig);
+    expect(parsedSettings.env.ANTHROPIC_SMALL_FAST_MODEL).toBeUndefined();
+    expect(parsedSettings.env.ANTHROPIC_MODEL).toBe("claude-main");
+  });
+
   it("shows dedicated Claude credentials section and submits credentials via meta", async () => {
     const onSubmit = vi.fn();
     const credentials = {

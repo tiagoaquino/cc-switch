@@ -499,6 +499,7 @@ export function ProviderForm({
   const {
     claudeModel,
     reasoningModel,
+    smallFastModel,
     defaultHaikuModel,
     defaultSonnetModel,
     defaultOpusModel,
@@ -1683,6 +1684,7 @@ export function ProviderForm({
             shouldShowModelSelector={effectiveCategory !== "official"}
             claudeModel={claudeModel}
             reasoningModel={reasoningModel}
+            smallFastModel={smallFastModel}
             defaultHaikuModel={defaultHaikuModel}
             defaultSonnetModel={defaultSonnetModel}
             defaultOpusModel={defaultOpusModel}

@@ -53,6 +53,7 @@ interface ClaudeFormFieldsProps {
   shouldShowModelSelector: boolean;
   claudeModel: string;
   reasoningModel: string;
+  smallFastModel: string;
   defaultHaikuModel: string;
   defaultSonnetModel: string;
   defaultOpusModel: string;
@@ -60,6 +61,7 @@ interface ClaudeFormFieldsProps {
     field:
       | "ANTHROPIC_MODEL"
       | "ANTHROPIC_REASONING_MODEL"
+      | "ANTHROPIC_SMALL_FAST_MODEL"
       | "ANTHROPIC_DEFAULT_HAIKU_MODEL"
       | "ANTHROPIC_DEFAULT_SONNET_MODEL"
       | "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -103,6 +105,7 @@ export function ClaudeFormFields({
   shouldShowModelSelector,
   claudeModel,
   reasoningModel,
+  smallFastModel,
   defaultHaikuModel,
   defaultSonnetModel,
   defaultOpusModel,
@@ -299,6 +302,27 @@ export function ClaudeFormFields({
                 onChange={(e) =>
                   onModelChange("ANTHROPIC_REASONING_MODEL", e.target.value)
                 }
+                autoComplete="off"
+              />
+            </div>
+
+            {/* Small Fast Model */}
+            <div className="space-y-2">
+              <FormLabel htmlFor="claudeSmallFastModel">
+                {t("providerForm.anthropicSmallFastModel", {
+                  defaultValue: "Small Fast Model",
+                })}
+              </FormLabel>
+              <Input
+                id="claudeSmallFastModel"
+                type="text"
+                value={smallFastModel}
+                onChange={(e) =>
+                  onModelChange("ANTHROPIC_SMALL_FAST_MODEL", e.target.value)
+                }
+                placeholder={t("providerForm.modelPlaceholder", {
+                  defaultValue: "",
+                })}
                 autoComplete="off"
               />
             </div>

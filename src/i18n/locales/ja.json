@@ -673,7 +673,7 @@
     "fillApiKey": "OPENAI_API_KEY を入力してください",
     "visitWebsite": "{{url}} を開く",
     "anthropicModel": "メインモデル",
-    "anthropicSmallFastModel": "高速モデル",
+    "anthropicSmallFastModel": "Small Fast モデル",
     "anthropicReasoningModel": "推論モデル（Thinking）",
     "apiFormat": "API フォーマット",
     "apiFormatHint": "プロバイダー API の入力フォーマットを選択",
